@@ -1,3 +1,395 @@
+# EverFlow Experience - research engine configuration
+# Everything tunable lives here. Do not hardcode any of it in code.
+# Paths use forward slashes on every platform.
+
+# ----------------------------------------------------------------------------
+# Locations. The workbook lives on Google Drive; the repo never contains it.
+# ----------------------------------------------------------------------------
 workbook_path: "G:/My Drive/03_Business-&-Projects/Everflow Experience/05_PARTNERS_AGENCIES_B2B/2026-08-21_EFE_Alpine_Partner_Database_v03.xlsx"
 output_dir:    "G:/My Drive/03_Business-&-Projects/Everflow Experience/05_PARTNERS_AGENCIES_B2B"
 cache_dir:     "./data/cache"
+state_dir:     "./data/state"
+log_dir:       "./data/logs"
+dry_run_dir:   "./data/out"
+
+# Emitted file naming: YYYY-MM-DD_EFE_Alpine_Partner_Database_vNN.xlsx
+output_basename: "EFE_Alpine_Partner_Database"
+
+# ----------------------------------------------------------------------------
+# Workbook schema. Verified against v03 on 2026-08-21.
+# ----------------------------------------------------------------------------
+workbook:
+  sheet: "PARTNERS"
+  header_row: 1
+  first_data_row: 2
+  expected_last_row: 254        # 253 data rows
+  expected_last_col: "AM"       # 39 columns
+  expected_sheets:
+    [READ_ME, DASHBOARD, PARTNERS, RESORTS_SBI, PRICING_BENCH, REGULATORY,
+     _SOURCES, _GAPS_ROUND2, CHANGELOG]
+  expected_formula_count: 491
+  # A file smaller than this cannot be the real workbook: Google Drive is still
+  # syncing and has handed back a placeholder. The real v03 is ~105 KB.
+  min_plausible_bytes: 50000
+  changelog_sheet: "CHANGELOG"
+  changelog_detail_sheet: "CHANGELOG_DETAIL"
+  tbd_token: "TBD"
+  # Values that mean "no data yet" and may therefore be filled.
+  empty_tokens: ["", "TBD", "N/A", "-"]
+
+  columns:
+    id:            "A"
+    entity_name:   "B"
+    category:      "C"
+    subcategory:   "D"
+    resort_base:   "E"
+    region_valley: "F"
+    country:       "G"
+    website_url:   "H"
+    general_email: "I"
+    sales_b2b_email: "J"
+    phone:         "K"
+    whatsapp:      "L"
+    contact_person_name: "M"
+    contact_person_role: "N"
+    linkedin_url:  "O"
+    instagram_handle: "P"
+    segment_tier:  "Q"
+    b2b_program_exists: "T"
+    commission_terms: "U"
+    priority_score: "Y"
+    contacted:     "Z"
+    status:        "AI"
+    source_url:    "AK"
+    date_verified: "AL"
+    round:         "AM"
+
+  # The only columns the enricher may ever write.
+  writable_columns: [I, J, K, L, M, N, O, P, U]
+  # Provenance columns: written only on rows where >=1 writable column changed.
+  provenance_columns: [AK, AL, AM]
+  # Human-owned CRM columns. Writing to any of these is a hard error.
+  crm_columns: [Z, AA, AB, AC, AD, AE, AF, AG, AH, AI, AJ]
+  # AC (Next_Follow_Up) is a live formula; never touched.
+  formula_columns: [AC]
+
+# ----------------------------------------------------------------------------
+# Row selection
+# ----------------------------------------------------------------------------
+selection:
+  # Rows where this column holds one of these values are skipped entirely
+  # (no fetch, no write). These are the human-verified "gold" rows.
+  skip_when:
+    - column: "Z"          # Contacted
+      values: ["YES"]
+  require_website: true
+  round_tag: "R2-enrich"   # written to AM on changed rows
+
+# ----------------------------------------------------------------------------
+# Fetching. Several of these companies are future partners: do not hammer them.
+# ----------------------------------------------------------------------------
+fetch:
+  user_agent: "EverFlowResearchBot/0.1 (+contact: roferbru@gmail.com; B2B partner contact research; respects robots.txt)"
+  contact_email: "roferbru@gmail.com"
+  timeout_seconds: 20
+  connect_timeout_seconds: 10
+  max_response_bytes: 2097152        # 2 MB
+  per_domain_delay_seconds: 2.0      # 1 request / 2 s per domain
+  global_concurrency: 5
+  max_pages_per_entity: 8
+  max_retries: 3
+  retry_backoff_seconds: 2.0
+  retry_on_status: [429, 500, 502, 503, 504]
+  respect_robots: true
+  robots_timeout_seconds: 10
+  honour_crawl_delay: true
+  max_crawl_delay_seconds: 30        # above this, skip the domain and report it
+  # Consecutive failures on one domain before the rest of its plan is abandoned.
+  # A site answering 429 to everything is telling us to stop, and it may be a
+  # future partner.
+  max_consecutive_failures: 4
+  verify_tls: true
+  follow_redirects: true
+  max_redirects: 5
+
+# ----------------------------------------------------------------------------
+# Page discovery. sitemap.xml is preferred over blind path guessing.
+# ----------------------------------------------------------------------------
+discovery:
+  use_sitemap: true
+  max_sitemap_urls: 3000
+  max_sitemap_children: 5            # nested sitemap index files to follow
+
+  # Probed in order. Combined with language_prefixes below.
+  path_candidates:
+    - "/contact"
+    - "/contact-us"
+    - "/contacts"
+    - "/kontakt"
+    - "/contatti"
+    - "/contacto"
+    - "/contato"
+    - "/nous-contacter"
+    - "/impressum"
+    - "/legal"
+    - "/legal-notice"
+    - "/mentions-legales"
+    - "/about"
+    - "/about-us"
+    - "/team"
+    - "/trade"
+    - "/b2b"
+    - "/partners"
+    - "/partner"
+    - "/agents"
+    - "/travel-agents"
+    - "/travel-trade"
+    - "/agences"
+    - "/agenzie"
+    - "/agencias"
+    - "/pro"
+
+  language_prefixes: ["", "/en", "/de", "/fr", "/it", "/es", "/pt"]
+
+  # DE/AT sites: Impressum is legally mandatory and the highest-yield page.
+  # Probed immediately after the homepage, ahead of the generic list.
+  impressum_first_countries: ["DE", "AT"]
+  impressum_first_tlds: [".de", ".at"]
+  impressum_paths: ["/impressum", "/impressum.html", "/de/impressum", "/impressum/",
+                    "/rechtliches", "/imprint", "/en/imprint"]
+
+  # URL tokens that mark a sitemap entry or in-page link as worth fetching.
+  contact_url_tokens:
+    [contact, kontakt, contatti, contacto, contato, impressum, imprint, legal,
+     mentions-legales, about, team, trade, b2b, partner, agent, agence, agenzie,
+     agencias, reservation, booking, pro]
+
+  # Link text that marks an in-page link as worth following.
+  contact_link_text:
+    [contact, contact us, kontakt, impressum, contatti, contacto, contato,
+     nous contacter, about us, our team, trade, travel trade, travel agents,
+     b2b, partners, agents, espace pro]
+
+# ----------------------------------------------------------------------------
+# Entity/domain scope. A group domain's corporate address is not the property's.
+# ----------------------------------------------------------------------------
+scope:
+  # A domain used by >= this many PARTNERS rows is treated as shared.
+  shared_domain_min_rows: 2
+  # Known global chain / group domains, even when only one row uses them.
+  chain_domains:
+    # Global hotel groups.
+    [marriott.com, fourseasons.com, aman.com, rosewoodhotels.com, sixsenses.com,
+     oetkercollection.com, hotelsbarriere.com, airelles.com, chevalblanc.com,
+     mandarinoriental.com, kempinski.com, hyatt.com, ihg.com, accor.com,
+     lhw.com, relaischateaux.com, belmond.com, roccofortehotels.com,
+     shangri-la.com, ritzcarlton.com, stregis.com, waldorfastoria.com, hilton.com,
+     # Single-row domains that nonetheless serve several properties. The guard keys
+     # on a domain appearing twice in PARTNERS, so these have to be named: only one
+     # Le K2 row exists in the sheet, but lek2palace.com serves the whole collection.
+     lek2palace.com, fermesdemarie.com, tschuggen.ch, resortragaz.ch,
+     adler-resorts.com, beaumier.com, falkensteiner.com, lefayresorts.com,
+     sonnenalp.de, pierreetvacances.com, mgm-hotels.com, cgh-residences.com,
+     odalys-vacances.com, lecollectionist.com, firefly-collection.com,
+     # Franchise and network sites, where the national HQ address is not the local
+     # shop the row is actually about.
+     intersportrent.com, skiset.co.uk, sport2000rent.com, skirepublic.com,
+     precisionski.fr, compagniedesalpes.com]
+  # Domains that refuse automated access outright -- 403 to every request, or a
+  # TLS stack too old to negotiate. There is no polite workaround and building an
+  # impolite one is not on the table: these are future partners. Rows on these
+  # domains are flagged `needs_manual_url`, skipped without a fetch, and listed
+  # once in the run report. Replace the row's Website_URL with the property's own
+  # page and it enriches normally on the next run.
+  needs_manual_url:
+    [marriott.com, fourseasons.com, sixsenses.com, chevalblanc.com,
+     oetkercollection.com, thechediandermatt.com]
+
+  # Minimum share of entity name tokens that must appear for a name match.
+  name_match_min_token_ratio: 0.5
+  # Tokens ignored when matching an entity name against a page.
+  name_stopwords:
+    [hotel, hotels, the, le, la, les, de, du, des, resort, spa, chalet, chalets,
+     grand, palace, group, collection, and, ski, alpine, sarl, gmbh, ag, sa,
+     ltd, llc, inc, srl, bv, oy, as, residences, residence, lodge, club]
+
+# ----------------------------------------------------------------------------
+# Email classification: General_Email (I) vs Sales_B2B_Email (J)
+# ----------------------------------------------------------------------------
+email:
+  # Local parts routed to Sales_B2B_Email, highest priority first.
+  sales_local_parts:
+    [traveltrade, travel-trade, travelagents, travel-agents, trade, b2b, sales,
+     partnerships, partnership, partners, partner, agents, agences, agenzie,
+     agencias, adv, wholesale, reseller, resellers, affiliate, affiliates, groups,
+     gruppen, gruppi, grupos, mice, corporate, business, commercial, commerciale,
+     ventas, vendite, vertrieb, pro, professionnels]
+
+  # Local parts routed to General_Email, highest priority first.
+  general_local_parts:
+    [info, contact, kontakt, contatti, contacto, contato, office, buero, bureau,
+     reception, empfang, hello, hallo, welcome, mail, email, enquiries, enquiry,
+     inquiries, reservations, reservation, reservierung, reservas, prenotazioni,
+     booking, bookings, frontoffice, frontdesk, guestrelations, concierge,
+     administration, admin, verwaltung]
+
+  # Never written anywhere. Noise, vendors, or unusable.
+  reject_local_parts:
+    [noreply, no-reply, donotreply, do-not-reply, postmaster, mailer-daemon,
+     abuse, webmaster, hostmaster, dmarc, spam, privacy, dpo, datenschutz,
+     unsubscribe, test, example, your, name, user, email, username]
+
+  reject_domains:
+    [example.com, example.org, example.net, domain.com, yourdomain.com,
+     sentry.io, wixpress.com, wix.com, squarespace.com,
+     godaddy.com, cloudflare.com, google.com, email.com,
+     yourcompany.com, company.com, site.com, mysite.com, jimdo.com, w3.org,
+     schema.org]
+
+  # A free-mail address is only accepted when it is the site's own published
+  # contact address (many small Alpine businesses genuinely use these).
+  freemail_domains:
+    [gmail.com, googlemail.com, hotmail.com, hotmail.fr, hotmail.de, outlook.com,
+     outlook.de, outlook.fr, yahoo.com, yahoo.fr, yahoo.de, gmx.de, gmx.net,
+     gmx.at, web.de, bluewin.ch, orange.fr, wanadoo.fr, free.fr, libero.it,
+     virgilio.it, alice.it, aon.at, a1.net, uol.com.br, bol.com.br, terra.com.br]
+
+
+# ----------------------------------------------------------------------------
+# Duplicate rows. Detection only -- nothing is ever merged automatically.
+# ----------------------------------------------------------------------------
+dedupe:
+  # Only legal-form suffixes are ignored when comparing names. Dropping generic
+  # words here would start merging genuinely different companies.
+  name_stopwords:
+    [gmbh, ag, sa, sarl, sas, sasu, eurl, srl, spa, ltd, limited, llc, inc,
+     plc, bv, nv, oy, ab, as, kg, ohg, ug, "co", corp, cia, ltda, sl, slu]
+
+  # Extra words that mark a row as a separate business unit rather than a copy.
+  # `Air Zermatt` and `Air Zermatt (heli-ski division)` are two units with two
+  # sets of contacts, so a subset match carrying any of these is NOT a duplicate.
+  division_markers:
+    [division, divisions, unit, units, branch, department, desk,
+     mice, events, event, kids, kid, childcare, children, family, clubs, club,
+     apartments, apartment, residences, residence, chalet, chalets, villas, villa,
+     heli, heliski, ski, skiing, guiding, touring, rental, rentals, bootfitting,
+     catering, chefs, transfers, transfer, aviation, charter,
+     partnerships, partnership, corporate, wholesale, b2b, trade, groups,
+     school, schools, academy, shop, boutique, spa, wellness, restaurant]
+
+# ----------------------------------------------------------------------------
+# Review queue. A queue you cannot read is a queue you will not read.
+# ----------------------------------------------------------------------------
+review:
+  # Alternates kept per row per field, best evidence first. Anything beyond this
+  # is counted and reported, never silently dropped.
+  max_alternates_per_field: 2
+
+# ----------------------------------------------------------------------------
+# Phone normalisation (E.164)
+# ----------------------------------------------------------------------------
+phone:
+  # PARTNERS Country value -> ISO region used as the parse hint.
+  country_to_region:
+    FR: FR
+    CH: CH
+    AT: AT
+    IT: IT
+    DE: DE
+    UK: GB
+    GB: GB
+    US: US
+    LU: LU
+    Brasil: BR
+    Brazil: BR
+    BR: BR
+    Mexico: MX
+    "México": MX
+    MX: MX
+    AR: AR
+  # TLD -> region, used when the Country column gives no hint.
+  tld_to_region:
+    ".fr": FR
+    ".ch": CH
+    ".at": AT
+    ".it": IT
+    ".de": DE
+    ".co.uk": GB
+    ".uk": GB
+    ".com.br": BR
+    ".br": BR
+    ".com.mx": MX
+    ".mx": MX
+    ".lu": LU
+    ".es": ES
+    ".pt": PT
+  min_digits: 7
+  max_digits: 15
+
+# ----------------------------------------------------------------------------
+# Social handles
+# ----------------------------------------------------------------------------
+social:
+  instagram_reject_paths:
+    [p, reel, reels, explore, stories, tv, accounts, direct, about, developer,
+     legal, privacy, terms, sharer, share]
+  linkedin_company_paths: [company, showcase, school]
+
+# ----------------------------------------------------------------------------
+# Commission / partner terms extraction
+# ----------------------------------------------------------------------------
+terms:
+  source_path_tokens: [trade, b2b, partner, partners, agent, agents,
+                       travel-agents, travel-trade, agences, agenzie, agencias, pro]
+  max_chars: 300
+  # Matched as regexes with a leading word boundary. `provision(?!s)` is deliberate:
+  # "Provision" is German for commission, but the English plural "provisions" turns
+  # up in sentences about packed lunches.
+  signal_patterns:
+    - "commissions?"
+    - "kommission"
+    - "provision(?!s)"
+    - "net rates?"
+    - "netto(?:preis|rate)"
+    - "tarif net"
+    - "wholesale rates?"
+    - "minimum (?:stay|nights|booking|volume)"
+    - "apply for (?:an|a trade) account"
+    - "trade account"
+    - "agent(?:s)? login"
+    - "partner programme?"
+    - "affiliate programme?"
+    - "travel (?:trade|agent) (?:rates?|programme?)"
+
+# ----------------------------------------------------------------------------
+# Confidence policy. Nothing below `high` is ever written to PARTNERS.
+# ----------------------------------------------------------------------------
+confidence:
+  write_threshold: "high"
+  # Page kinds that yield `high` when the scope guard is satisfied.
+  high_page_kinds: [contact, impressum, trade, legal]
+  medium_page_kinds: [home, about, team, other]
+  # A company's own social profile link is verifiable in one click and carries no
+  # sending risk, so a link published on the entity's own domain counts as high.
+  # Set false to hold socials for review like everything else.
+  social_on_own_domain_is_high: true
+  # Many small businesses publish info@ only in the homepage footer and have no
+  # /contact page at all, so a homepage role address counts as high.
+  # This applies ONLY when the address is on the entity's own domain. A third-party
+  # address in the same footer -- the web agency, a booking platform, the PR firm --
+  # is still held for review, because it is not this partner's contact.
+  homepage_role_email_is_high: true
+
+# ----------------------------------------------------------------------------
+# GDPR. Named-individual addresses never reach PARTNERS.
+# ----------------------------------------------------------------------------
+gdpr:
+  write_personal_email_to_workbook: false
+  personal_name_min_tokens: 2
+  # Local-part shapes that indicate a named individual rather than a role.
+  personal_local_part_patterns:
+    - "^[a-z]{2,}\\.[a-z]{2,}$"
+    - "^[a-z]\\.[a-z]{3,}$"
+    - "^[a-z]{3,}\\.[a-z]$"
+    - "^[a-z]{2,}_[a-z]{2,}$"
+    - "^[a-z]{2,}-[a-z]{2,}$"

@@ -1,0 +1,8 @@
+User-agent: *
+Disallow: /private/
+Disallow: /booking-engine/
+Crawl-delay: 5
+Sitemap: https://summitlodge.example/sitemap.xml
+
+User-agent: BadBot
+Disallow: /

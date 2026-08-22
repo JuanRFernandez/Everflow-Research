@@ -1,5 +1,34 @@
-data/cache/
-data/out/
+# --- GDPR: the partner workbook holds 41 named individuals, 59 phone numbers
+# --- and 27 emails. It lives on G:\ (Google Drive) and must NEVER enter git.
+data/
 *.xlsx
 *.xls
+*.xlsm
+*.xlsb
+~$*
 .env
+.env.*
+
+# --- python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+uv.lock
+
+# --- local stores (Phase 1+)
+*.db
+*.sqlite
+*.sqlite3
+
+# --- os / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

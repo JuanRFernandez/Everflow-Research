@@ -1,0 +1,203 @@
+# Workbook notes — measured, not assumed
+
+Everything here was read off
+`2026-08-21_EFE_Alpine_Partner_Database_v03.xlsx` on 2026-08-21. The writer depends
+on these facts, so `efe check` re-asserts the structural ones on every run and
+refuses to proceed if any has changed.
+
+---
+
+## Structure
+
+| | |
+|---|---|
+| Sheets | `READ_ME, DASHBOARD, PARTNERS, RESORTS_SBI, PRICING_BENCH, REGULATORY, _SOURCES, _GAPS_ROUND2, CHANGELOG` |
+| PARTNERS | `A1:AM254` — 39 columns, 253 data rows |
+| Autofilter | `A1:AM254` |
+| Freeze panes | `C2` |
+| Data validations | 5 — `T2:T254` (Y/N/Unknown), `Y2:Y254` (1–5), `Z2:Z254` (NO/YES), `AD2:AH254` (X), `AI2:AI254` (21 statuses) |
+| Defined names | 3 sheet-local `_xlnm._FilterDatabase` (PARTNERS, RESORTS_SBI, _SOURCES) |
+| Charts / images / pivots | none — the 3 `xl/drawings/drawing*.xml` parts are empty LibreOffice stubs |
+| Last writer | LibreOffice 24.2.7.2 (`docProps/app.xml`); created by openpyxl |
+
+## Formulas — 491, and where they are
+
+| Sheet | Count | What |
+|---|---|---|
+| DASHBOARD | 55 | `COUNTIF` / `COUNTIFS` over PARTNERS, plus `SUM` totals |
+| PARTNERS | 253 | all in column **AC**: `=IFERROR(AA{r}+AB{r},"")` (`Next_Follow_Up`) |
+| RESORTS_SBI | 183 | `SUMPRODUCT` against the editable weights row 5, `MAX` row 6, `RANK` |
+
+**The dependency fact the writer is built on:** the only cross-sheet references in
+the entire workbook are DASHBOARD → PARTNERS, 74 of them, and they touch only
+`$C` (Category), `$G` (Country), `$Y` (Priority_Score), `$Z` (Contacted) and
+`$AI` (Status). RESORTS_SBI is completely self-contained.
+
+None of those five columns is writable by this tool. `PARTNERS!AC` depends on `AA`
+and `AB`, which are CRM columns and equally off-limits. So **no write this tool
+makes can change any formula's result anywhere in the workbook.**
+
+`writer.assert_no_precedents_touched` enforces that premise on every run. If someone
+later adds `C`, `G`, `Y`, `Z`, `AI`, `AA` or `AB` to `writable_columns` in
+`config.yaml`, the run stops rather than silently preserving a stale DASHBOARD total.
+
+## Cached formula results — the one thing openpyxl destroys
+
+All 491 formula cells carry a cached `<v>` result (written by LibreOffice). An
+openpyxl `load_workbook` → `save` round-trip replaces every one with an empty
+`<v></v>`, so a reader using `data_only=True` — Google Sheets on import, pandas, any
+downstream script — sees `None` until Excel recalculates.
+
+`xmlutil.reinject_cached_values` copies them back from the input after the save. That
+is only sound because of the dependency fact above.
+
+### Round-trip fidelity spike, 2026-08-21
+
+`load_workbook` → `save`, zero edits, input vs output:
+
+```
+[OK ] sheet names/order (9)          [OK ] freeze panes
+[OK ] formulas (491)                 [OK ] column dimensions
+[OK ] data validations               [OK ] number formats
+[OK ] autofilter refs                [OK ] all cell values (11845)
+[OK ] defined names
+cached <v>: IN=491  OUT=0            <- the only loss, repaired by reinjection
+```
+
+Parts openpyxl drops, all harmless and all whitelisted in `verify.BENIGN_DROPPED_PARTS`:
+
+| Dropped | Why it does not matter |
+|---|---|
+| `xl/drawings/drawing{1,2,3}.xml` | empty `<xdr:wsDr/>` stubs, 299 bytes each, no content |
+| `xl/worksheets/_rels/sheet{3,4,7}.xml.rels` | relationships to those empty drawings |
+| `xl/sharedStrings.xml` | openpyxl emits inline strings instead; all 11,845 values verified identical |
+| `docProps/custom.xml` | an empty `<Properties/>` element |
+
+**Conclusion: the openpyxl path is safe for this workbook**, with cached-value
+reinjection and the fidelity gate. The surgical zip-level writer described in the
+plan was not needed and is not built.
+
+## The workbook was re-exported mid-project — 2026-08-21, 19:39
+
+Partway through the first full enrichment run, `v03` on the Drive changed underneath
+us: 105,808 bytes became 126,013. The fidelity gate caught it on the write, refused
+to emit, and deleted the candidate. That is exactly what it is for, so the incident
+is recorded here rather than quietly absorbed.
+
+**What happened:** the file was round-tripped through Google Sheets. The evidence is
+unambiguous — `docProps/app.xml` (LibreOffice's signature) is gone, there is now an
+`xl/metadata` part with no `.xml` extension carrying a Google blob (`en_US`,
+`America/Los_Angeles`, a default font), every sheet has its own `_rels`, and the
+three empty drawing stubs became nine.
+
+**What was verified afterwards, before trusting the file again:**
+
+| | Before | After |
+|---|---|---|
+| PARTNERS | `A1:AM254` | `A1:AM254` |
+| Formulas | 491 (55 / 253 / 183) | 491 (55 / 253 / 183) |
+| Data validations | 5 | 5 |
+| Autofilter | `A1:AM254` | `$A$1:$AM$254` (cosmetic) |
+| Freeze panes | `C2` | `C2` |
+| `Contacted = YES` | 18 rows | the same 18 row numbers |
+| Round tags | R1 161 / Pre-existing 92 | R1 161 / Pre-existing 92 |
+| Cached results | present | present |
+
+**No data was lost.** The re-export is cosmetically different and semantically
+identical.
+
+**What it changed in the code:** the gate had been whitelisting dropped parts by
+*filename*, including `xl/drawings/drawingN.xml` — justified when they were 299-byte
+empty stubs, but a filename match would equally have accepted a drawing containing a
+real chart or image. Drawings are now judged by **content**: `verify.snapshot` counts
+`twoCellAnchor` / `oneCellAnchor` / `absoluteAnchor` elements, and a dropped drawing
+is benign only when that count is zero. All nine of Google's drawings hold zero
+anchors, so dropping them is safe; a drawing with an object now fails the gate.
+
+`xl/metadata` is whitelisted explicitly, with the reasoning in the code: it is
+Google's private round-trip blob, not the OOXML `xl/metadata.xml` cell-metadata part,
+and Excel ignores it.
+
+**The operational lesson:** the workbook can change between the read and the write.
+The gate compares the emitted file against the input *as it was read at the start of
+the run*, so a mid-run edit is caught rather than silently overwritten. If you edit
+the workbook while a run is in progress, expect the run to refuse to write — that is
+the correct outcome, and re-running costs nothing because every page is cached.
+
+## Data as of v03
+
+| | |
+|---|---|
+| Data rows | 253 |
+| `Round = R1` / `Pre-existing` | 161 / 92 |
+| `Contacted = YES` (the gold rows) | **18** — skipped entirely; 10 have a website, 8 do not |
+| Rows with a usable `Website_URL` | 223 (206 unique domains) |
+| Rows the enricher selects | **213** (149 R1 + 64 Pre-existing) |
+| Rows skipped | 40 — 18 gold, 22 without a website |
+
+Fill state of the target columns before any run:
+
+| Col | Field | Filled | TBD |
+|---|---|---|---|
+| I | General_Email | 27 | 226 |
+| J | Sales_B2B_Email | 1 | 252 |
+| K | Phone | 59 | 194 |
+| L | WhatsApp | 38 | 215 |
+| M | Contact_Person_Name | 41 | 212 |
+| N | Contact_Person_Role | 2 | 251 |
+| O | LinkedIn_URL | 0 | 253 |
+| P | Instagram_Handle | 70 | 183 |
+| U | Commission_or_Partner_Terms | 0 | 253 |
+
+`Date_Verified` (AL) is stored as **text** `"2026-08-21"` with number format
+`General`, not as a date. The writer writes text to match.
+
+## Group and chain domains
+
+16 domains are shared by more than one row, covering 33 rows; several more rows point
+at a global chain rather than the property:
+
+```
+scottdunn.com x3   airelles.com x2      oetkercollection.com x2   hotelsbarriere.com x2
+sixsenses.com x2   cimalpes.com x2      powderbyrne.com x2        air-zermatt.ch x2
+tyrol.com x2       helibernina.ch x2    matuete.com x2            ttwgroup.com x2
+tmtravel.com.br x2 nuba.com x2          juliatours.com.mx x2      viajesbojorquez.com x2
+```
+
+plus single-row chain domains: `marriott.com` (W Verbier), `fourseasons.com`,
+`aman.com`, `rosewoodhotels.com`, `chevalblanc.com`.
+
+The scope guard matches against the page's **identity text only** — URL path, `<title>`,
+`og:title`, `h1`/`h2`/`h3`. Not the body: a chain site's navigation lists every
+property the group owns, so body matching would let one group contact page claim to
+be about any of them.
+
+## Near-duplicate rows (for Phase-1 dedup, not fixed here)
+
+The v03 recovery merge left several entities twice, distinguishable only by accents:
+
+`Matuete` / `Matueté` · `Julia Tours Mexico` / `Juliá Tours México` ·
+`Viajes Bojorquez (Matriz)` ×2 · `TTW Group` ×2 · `TM Travel Tailor Made` ×2 ·
+`NUBA Travel` / `NUBA (Nuba Travel)` · `Cimalpes` / `Cimalpes (apartments division)`
+
+Every run report lists these. Merging them is Phase-1 entity-resolution work
+(`ARCHITECTURE.md` §3), deliberately not attempted by Phase 0.
+
+## `_SOURCES` and the revisit question
+
+223 domains, all flagged `Exclude_Next_Round = YES`. **99 of them are PARTNERS
+website domains.**
+
+That flag governs **discovery** (Phase 2): do not go looking for new entities there
+again. It does not govern **enrichment**. Round 1 visited those domains to find
+*who exists*, not to extract contact details — which is precisely why 226 rows still
+read `TBD`. The enricher revisits them on purpose and logs every revisit, with that
+reason, in the run report.
+
+## One observation, not acted on
+
+`Next_Follow_Up` (`AC`) is `=IFERROR(AA{r}+AB{r},"")`. On an uncontacted row `AA` is
+blank and `AB` is 14, so the formula evaluates to `14` — which Excel renders as
+1900-01-14 under a date format. It is harmless while `Contacted = NO`, and it is your
+formula, so nothing here touches it. Flagging it in case the DASHBOARD ever counts on
+that column.
