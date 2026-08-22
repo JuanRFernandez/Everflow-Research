@@ -26,6 +26,43 @@ phone numbers and 27 email addresses.
 
 ---
 
+## How the workbook is edited — a fixed constraint
+
+The owner edits the workbook **exclusively in the Google Sheets web editor**. There is
+no desktop Excel on this machine, and that is not going to change.
+
+Everything below follows from that. All of it is already handled. **None of it is a
+bug, and none of it should be "fixed" again.**
+
+| What Sheets does | What the tool does about it | Status |
+|---|---|---|
+| Pads PARTNERS' used range out to 1000 rows on save — 746 of them empty | The schema check compares the **data extent** (the last row holding an ID or an entity name), not the raw row count. Trailing blanks are logged and ignored; only populated rows are loaded. | **Correct as is** |
+| Rewrites the whole file on open — size, mtime and internal parts all change | The write gate compares the emitted file against the input *as it was read at the start of the run*, and refuses to write rather than overwriting a file that moved underneath it. | **Correct as is** |
+
+A genuinely short sheet still fails the schema check, and a genuinely lossy write
+still fails the gate. The tolerances are narrow and deliberate.
+
+### The one operational rule
+
+> **Never run enrichment while the workbook is open in Google Sheets.**
+> Close the tab first.
+
+If the gate refuses a write, that is the correct outcome — something changed the file
+mid-run. **Stop and report it. Do not retry, and do not force.** Re-running after the
+tab is closed costs nothing, because every fetched page is cached.
+
+### Do not convert the workbook to a native Google Sheet
+
+It would look tidier and it would break the tool permanently. Drive for desktop syncs
+native Sheets as `.gsheet` **pointer files** — a few bytes of JSON holding a document
+ID and no cell data at all. There would be nothing on `G:` for openpyxl to read, and
+the read guard would (correctly) refuse every run.
+
+The workbook has to stay a real `.xlsx` file. Edit it in Sheets, keep it stored as
+`.xlsx`.
+
+---
+
 ## What it does
 
 For every PARTNERS row that has a website and is not human-owned:

@@ -77,18 +77,23 @@ Parts openpyxl drops, all harmless and all whitelisted in `verify.BENIGN_DROPPED
 reinjection and the fidelity gate. The surgical zip-level writer described in the
 plan was not needed and is not built.
 
-## The workbook was re-exported mid-project — 2026-08-21, 19:39
+## What a Google Sheets save looks like from the tool's side — 2026-08-21, 19:39
 
 Partway through the first full enrichment run, `v03` on the Drive changed underneath
 us: 105,808 bytes became 126,013. The fidelity gate caught it on the write, refused
-to emit, and deleted the candidate. That is exactly what it is for, so the incident
-is recorded here rather than quietly absorbed.
+to emit, and deleted the candidate.
 
-**What happened:** the file was round-tripped through Google Sheets. The evidence is
-unambiguous — `docProps/app.xml` (LibreOffice's signature) is gone, there is now an
-`xl/metadata` part with no `.xml` extension carrying a Google blob (`en_US`,
-`America/Los_Angeles`, a default font), every sheet has its own `_rels`, and the
-three empty drawing stubs became nine.
+**This was not an incident.** The owner edits the workbook exclusively in the Google
+Sheets web editor (see [`PHASE0_HANDOFF.md`](PHASE0_HANDOFF.md)), and Sheets rewrites
+the whole file on open. The workbook simply had a tab open while a job was running.
+The write-up is kept because it is the clearest record of *what that rewrite does to
+the file*, which is worth knowing when reading the fidelity claims below.
+
+**What the rewrite changes:** `docProps/app.xml` (LibreOffice's signature) disappears,
+an `xl/metadata` part with no `.xml` extension appears carrying a Google blob
+(`en_US`, `America/Los_Angeles`, a default font), every sheet gains its own `_rels`,
+and the three empty drawing stubs become nine. A later save also padded the used range
+out to 1000 rows.
 
 **What was verified afterwards, before trusting the file again:**
 
@@ -118,11 +123,11 @@ anchors, so dropping them is safe; a drawing with an object now fails the gate.
 Google's private round-trip blob, not the OOXML `xl/metadata.xml` cell-metadata part,
 and Excel ignores it.
 
-**The operational lesson:** the workbook can change between the read and the write.
-The gate compares the emitted file against the input *as it was read at the start of
-the run*, so a mid-run edit is caught rather than silently overwritten. If you edit
-the workbook while a run is in progress, expect the run to refuse to write — that is
-the correct outcome, and re-running costs nothing because every page is cached.
+**The operational rule:** never run enrichment while the workbook is open in Google
+Sheets. The gate compares the emitted file against the input *as it was read at the
+start of the run*, so a file that moves underneath a job is caught rather than
+silently overwritten. On a refusal, stop and report — do not retry and do not force.
+Re-running with the tab closed costs nothing because every page is cached.
 
 ## Data as of v03
 

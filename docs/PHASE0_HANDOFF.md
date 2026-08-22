@@ -251,14 +251,34 @@ In `data/out/`:
 - `dry_run_<timestamp>.md` — the decision table.
 - `duplicates_<timestamp>.md` — the merge decision sheet.
 
+## The editing environment — read this before changing anything
+
+The owner edits the workbook **exclusively in the Google Sheets web editor**. There is
+no desktop Excel, and that is permanent. Two behaviours follow from it, both already
+handled. **Neither is a defect. Do not re-diagnose or re-fix them.**
+
+- **Sheets pads PARTNERS' used range to 1000 rows on save**, 746 of them empty. The
+  schema check compares the *data* extent — the last row holding an ID or an entity
+  name — logs the trailing blanks, and loads only populated rows. A genuinely short
+  sheet still fails.
+- **Sheets rewrites the whole file on open**, changing its size, mtime and internal
+  parts. The write gate compares the output against the input as read at the start of
+  the run and refuses rather than overwriting. That is the gate working, not breaking.
+
+This is also the real explanation for the "mid-run re-export" written up in
+[`WORKBOOK_NOTES.md`](WORKBOOK_NOTES.md): the file was not corrupted or tampered with,
+it was simply open in Sheets while a job was running.
+
+**The one operational rule: never run enrichment while the workbook is open in
+Sheets.** On a gate refusal, stop and report — do not retry, do not force. Re-running
+with the tab closed costs nothing because every page is cached.
+
+**Do not convert the workbook to a native Google Sheet.** Drive for desktop syncs
+those as `.gsheet` pointer files with no readable cell data, so there would be nothing
+on `G:` for the tool to open. It must stay a real `.xlsx`.
+
 ## After the handoff
 
-Two things changed in the folder once v04 landed, both recorded here so the next
-person is not surprised:
-
-- **v03 was archived** to `99_ARCHIVE/2026-08-21_EFE_Alpine_Partner_Database_v03_SUPERSEDED.xlsx`,
-  so `config.yaml`'s `workbook_path` now points at v04.
-- **v04 was opened and re-saved**, which padded PARTNERS' used range out to 1000 rows
-  with 746 empty ones. The schema check now compares the *data* extent — the last row
-  holding an ID or an entity name — and logs trailing blanks rather than failing on
-  them. A genuinely short sheet still fails.
+Also worth knowing: **v03 was archived** to
+`99_ARCHIVE/2026-08-21_EFE_Alpine_Partner_Database_v03_SUPERSEDED.xlsx`, so
+`config.yaml`'s `workbook_path` now points at v04.
