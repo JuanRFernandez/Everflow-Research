@@ -189,7 +189,9 @@ class Config(BaseModel):
     cache_dir: str
     state_dir: str = "./data/state"
     log_dir: str = "./data/logs"
-    dry_run_dir: str = "./data/out"
+    artifacts_dir: str = "./data/out"
+    #: Deprecated alias for `artifacts_dir`, still honoured if a config sets it.
+    dry_run_dir: str | None = None
     output_basename: str = "EFE_Alpine_Partner_Database"
 
     workbook: WorkbookConfig
@@ -237,8 +239,14 @@ class Config(BaseModel):
         return self._resolve(self.log_dir)
 
     @property
+    def artifacts_directory(self) -> Path:
+        """Where every non-workbook output goes. Never the Drive folder."""
+        return self._resolve(self.dry_run_dir or self.artifacts_dir)
+
+    @property
     def dry_run_directory(self) -> Path:
-        return self._resolve(self.dry_run_dir)
+        """Deprecated alias kept so older call sites keep working."""
+        return self.artifacts_directory
 
     def sanity_check(self) -> list[str]:
         """Structural problems that would make a run unsafe. Empty list == fine."""
@@ -255,6 +263,14 @@ class Config(BaseModel):
             problems.append(f"writable_columns overlaps formula_columns: {sorted(overlap)}")
         if wb.column_for("contacted") not in wb.crm_columns:
             problems.append("the Contacted column must be listed in crm_columns")
+        try:
+            if self.artifacts_directory == self.output_directory:
+                problems.append(
+                    "artifacts_dir must not be the same as output_dir: the Drive "
+                    "folder receives the workbook only"
+                )
+        except (OSError, ValueError):  # pragma: no cover - unresolvable path
+            pass
         for logical in ("general_email", "sales_b2b_email", "phone", "whatsapp",
                         "contact_person_name", "contact_person_role", "linkedin_url",
                         "instagram_handle", "commission_terms"):

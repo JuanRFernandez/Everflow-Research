@@ -618,22 +618,16 @@ def write_outputs(
     stem: str,
     summary: RunSummary,
     outcome: RunOutcome,
-    *,
-    decision_table_dir: Path | None = None,
 ) -> dict[str, Path]:
-    """Write the Markdown report, the JSON summary, the CSVs and the decision table.
+    """Write every process artifact for a run into one local directory.
 
-    Args:
-        decision_table_dir: where `dry_run_<timestamp>.md` goes. Defaults to
-            `directory`; the CLI points it at `data/out/` for every run so the
-            readable table always lands in the same place.
+    The workbook is emitted separately by `workbook.writer`; nothing here ever goes
+    to the Drive folder.
     """
     directory.mkdir(parents=True, exist_ok=True)
     written: dict[str, Path] = {}
 
-    table_dir = decision_table_dir or directory
-    table_dir.mkdir(parents=True, exist_ok=True)
-    table = table_dir / f"dry_run_{summary.run_id}.md"
+    table = directory / f"dry_run_{summary.run_id}.md"
     table.write_text(render_decision_table(summary, outcome), encoding="utf-8")
     written["decisions"] = table
 

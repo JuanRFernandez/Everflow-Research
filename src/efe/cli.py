@@ -72,10 +72,6 @@ def build_parser() -> argparse.ArgumentParser:
     enrich.add_argument(
         "--fresh", action="store_true", help="ignore the resume ledger and start over"
     )
-    enrich.add_argument(
-        "--report-to-drive", action="store_true",
-        help="on a dry run, also write the report to the Drive output folder",
-    )
 
     check = subparsers.add_parser(
         "check", help="validate the workbook is readable and matches the schema"
@@ -156,21 +152,33 @@ def cmd_verify(args: argparse.Namespace) -> int:
 def write_duplicates_report(cfg, view, run_id: str) -> tuple[Path, int]:
     """Emit `data/out/duplicates_<run_id>.md`. Detection only -- never a merge."""
     pairs = find_duplicates(view, cfg)
-    directory = cfg.dry_run_directory
+    directory = cfg.artifacts_directory
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"duplicates_{run_id}.md"
     path.write_text(render_duplicates_report(pairs, view, cfg), encoding="utf-8")
     return path, len(pairs)
 
 
-def announce(paths: dict[str, Path]) -> None:
-    """Print every file a run produced. The decision table goes last and loudest."""
-    console.print("\n[bold]Reports[/bold]")
-    for label in ("report", "json", "changes", "review", "duplicates"):
+def announce(cfg, paths: dict[str, Path], workbook: Path | None = None) -> None:
+    """Print where everything landed, split by destination.
+
+    The two locations are kept visibly apart on purpose: the Drive folder receives
+    the workbook and nothing else, and every process artifact stays local.
+    """
+    console.print()
+    console.print("[bold]Google Drive[/bold] - the workbook only")
+    console.print(f"  [dim]{cfg.output_directory}[/dim]")
+    if workbook is not None:
+        console.print(f"  [green]workbook[/green]    {workbook.name}")
+    else:
+        console.print("  [dim](nothing written - dry run)[/dim]")
+
+    console.print()
+    console.print("[bold]Local artifacts[/bold] - reports, CSVs, decision table")
+    console.print(f"  [dim]{cfg.artifacts_directory}[/dim]")
+    for label in ("report", "json", "changes", "review", "duplicates", "decisions"):
         if label in paths:
-            console.print(f"  {label:11s} {paths[label]}")
-    if "decisions" in paths:
-        console.print(f"\n[bold green]Decision table:[/bold green] {paths['decisions']}")
+            console.print(f"  {label:11s} {paths[label].name}")
 
 
 def cmd_duplicates(args: argparse.Namespace) -> int:
@@ -183,7 +191,8 @@ def cmd_duplicates(args: argparse.Namespace) -> int:
         f"[green]{count}[/green] duplicate pair(s) found across {len(view.rows)} rows. "
         "Nothing was changed."
     )
-    console.print(f"  duplicates  {path}")
+    console.print(f"  [dim]{path.parent}[/dim]")
+    console.print(f"  duplicates  {path.name}")
     return 0
 
 
@@ -255,15 +264,7 @@ def cmd_enrich(args: argparse.Namespace) -> int:
 
     if args.dry_run:
         stem = f"{today_iso()}_DRYRUN_{run_id}"
-        written = write_outputs(
-            cfg.dry_run_directory, stem, summary, outcome,
-            decision_table_dir=cfg.dry_run_directory,
-        )
-        if args.report_to_drive:
-            written |= write_outputs(
-                cfg.output_directory, stem, summary, outcome,
-                decision_table_dir=cfg.dry_run_directory,
-            )
+        written = write_outputs(cfg.artifacts_directory, stem, summary, outcome)
         written["duplicates"] = duplicates_path
         print_summary(console, summary)
         console.print("\n[yellow]Dry run: no workbook was written.[/yellow]")
@@ -272,7 +273,7 @@ def cmd_enrich(args: argparse.Namespace) -> int:
                 f"[yellow]{duplicate_count} duplicate row pair(s) found[/yellow] "
                 "- reported, never merged."
             )
-        announce(written)
+        announce(cfg, written)
         return 0
 
     if not outcome.changes:
@@ -281,12 +282,9 @@ def cmd_enrich(args: argparse.Namespace) -> int:
             "\n[yellow]Nothing met the write threshold, so no workbook was emitted.[/yellow]"
         )
         stem = f"{today_iso()}_NOWRITE_{run_id}"
-        written = write_outputs(
-            cfg.dry_run_directory, stem, summary, outcome,
-            decision_table_dir=cfg.dry_run_directory,
-        )
+        written = write_outputs(cfg.artifacts_directory, stem, summary, outcome)
         written["duplicates"] = duplicates_path
-        announce(written)
+        announce(cfg, written)
         return 0
 
     destination = next_version_path(cfg)
@@ -296,20 +294,17 @@ def cmd_enrich(args: argparse.Namespace) -> int:
     )
     summary.workbook_out = str(written_path)
 
-    outputs = write_outputs(
-        cfg.output_directory, written_path.stem, summary, outcome,
-        decision_table_dir=cfg.dry_run_directory,
-    )
+    # Artifacts are named after the workbook version they describe, but stay local.
+    outputs = write_outputs(cfg.artifacts_directory, written_path.stem, summary, outcome)
     outputs["duplicates"] = duplicates_path
     print_summary(console, summary)
-    console.print(f"\n[green]Written:[/green] {written_path}")
     if duplicate_count:
         console.print(
-            f"[yellow]{duplicate_count} duplicate row pair(s) found[/yellow] "
+            f"\n[yellow]{duplicate_count} duplicate row pair(s) found[/yellow] "
             "- reported, never merged."
         )
-    announce(outputs)
-    console.print(f"  [dim]input untouched: {view.path}[/dim]")
+    announce(cfg, outputs, workbook=written_path)
+    console.print(f"\n[dim]input untouched: {view.path}[/dim]")
     return 0
 
 

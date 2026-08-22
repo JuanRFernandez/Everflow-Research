@@ -232,17 +232,33 @@ beside `enrich`, `check`, `verify` and `duplicates` without restructuring.
 
 ## Files this produced
 
-On the Drive, alongside the workbook:
+**On the Drive — the workbook only.** `output_dir` receives the versioned `.xlsx` and
+nothing else; every process artifact stays local in `artifacts_dir`
+(`./data/out`, gitignored). Run reports and review CSVs are working output, not
+deliverables, and the CSVs carry contact data that should not sync to a shared
+folder. Both paths are printed at the end of every run.
 
 - `2026-08-21_EFE_Alpine_Partner_Database_v04.xlsx` — with a new `CHANGELOG_DETAIL`
   sheet, 1,385 rows logging every cell change *and* every held-back candidate.
+
+In `data/out/`:
+
 - `…_v04_run_report.md` / `.json` — totals, skips with reasons, failures, domains
   abandoned, rows needing a manual URL, the shared-domain guard table, ledger
   revisits.
 - `…_v04_changes.csv` — every cell written, with its reason.
 - `…_v04_review_queue.csv` — all 610 held candidates and why.
-
-In the repo under gitignored `data/out/`:
-
 - `dry_run_<timestamp>.md` — the decision table.
 - `duplicates_<timestamp>.md` — the merge decision sheet.
+
+## After the handoff
+
+Two things changed in the folder once v04 landed, both recorded here so the next
+person is not surprised:
+
+- **v03 was archived** to `99_ARCHIVE/2026-08-21_EFE_Alpine_Partner_Database_v03_SUPERSEDED.xlsx`,
+  so `config.yaml`'s `workbook_path` now points at v04.
+- **v04 was opened and re-saved**, which padded PARTNERS' used range out to 1000 rows
+  with 746 empty ones. The schema check now compares the *data* extent — the last row
+  holding an ID or an entity name — and logs trailing blanks rather than failing on
+  them. A genuinely short sheet still fails.

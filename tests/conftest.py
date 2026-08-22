@@ -199,7 +199,8 @@ def synthetic_config(tmp_path: Path, synthetic_workbook: Path):
     raw["cache_dir"] = str(tmp_path / "cache").replace("\\", "/")
     raw["state_dir"] = str(tmp_path / "state").replace("\\", "/")
     raw["log_dir"] = str(tmp_path / "logs").replace("\\", "/")
-    raw["dry_run_dir"] = str(tmp_path / "dryrun").replace("\\", "/")
+    raw["artifacts_dir"] = str(tmp_path / "artifacts").replace("\\", "/")
+    raw.pop("dry_run_dir", None)
     raw["workbook"]["expected_last_row"] = 1 + len(SYNTHETIC_ROWS)
     raw["workbook"]["expected_formula_count"] = len(SYNTHETIC_ROWS) + 3
     # The synthetic workbook is ~10 KB; the real one is ~105 KB.

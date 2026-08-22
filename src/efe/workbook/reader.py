@@ -11,6 +11,7 @@ Both raise immediately with an instruction, never a retry.
 
 from __future__ import annotations
 
+import logging
 import zipfile
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -28,6 +29,8 @@ from efe.models import (
     SchemaMismatchError,
     WorkbookLockedError,
 )
+
+log = logging.getLogger(__name__)
 
 #: A workbook this small cannot be the real thing; Drive is still syncing.
 MIN_PLAUSIBLE_BYTES = 50_000
@@ -155,6 +158,25 @@ class WorkbookGuardOutputExists(RuntimeError):
 # Schema
 # ---------------------------------------------------------------------------
 
+def last_data_row(ws, spec) -> int:
+    """The last row that actually holds an entity.
+
+    `ws.max_row` is the used range, not the data. Excel and Google Sheets both pad a
+    saved sheet out to their default grid -- a round trip through Sheets left this
+    workbook reporting 1000 rows with 746 of them empty. Trailing blanks are
+    cosmetic; the data extent is what the schema check cares about.
+    """
+    id_col = column_index_from_string(spec.column_for("id"))
+    name_col = column_index_from_string(spec.column_for("entity_name"))
+    for row in range(ws.max_row, spec.first_data_row - 1, -1):
+        if str(ws.cell(row, id_col).value or "").strip() or str(
+            ws.cell(row, name_col).value or ""
+        ).strip():
+            return row
+    return spec.header_row
+
+
+
 def assert_schema(wb: Workbook, cfg: Config) -> None:
     """Confirm the workbook is the shape the config describes.
 
@@ -179,10 +201,20 @@ def assert_schema(wb: Workbook, cfg: Config) -> None:
             f"{spec.sheet} has {ws.max_column} columns, expected "
             f"{last_col_index} (A:{spec.expected_last_col})"
         )
-    if ws.max_row != spec.expected_last_row:
+    populated = last_data_row(ws, spec)
+    if populated != spec.expected_last_row:
         problems.append(
-            f"{spec.sheet} has {ws.max_row} rows, expected {spec.expected_last_row} "
+            f"{spec.sheet} holds data to row {populated}, expected "
+            f"{spec.expected_last_row} "
             f"({spec.expected_last_row - spec.first_data_row + 1} data rows)"
+        )
+    if ws.max_row > populated:
+        # Tolerated: a spreadsheet app padded the used range. Say so rather than
+        # failing, so the difference is visible if it ever means something else.
+        log.info(
+            "%s: used range runs to row %d but data ends at %d; "
+            "%d trailing empty rows ignored",
+            spec.sheet, ws.max_row, populated, ws.max_row - populated,
         )
 
     # Every mapped column must carry the header its logical name implies.
@@ -365,7 +397,7 @@ def load_workbook_view(cfg: Config, path: Path | None = None) -> WorkbookView:
         }
 
         rows: list[PartnerRow] = []
-        for r in range(spec.first_data_row, ws.max_row + 1):
+        for r in range(spec.first_data_row, last_data_row(ws, spec) + 1):
             cells = {letters[c - 1]: ws.cell(r, c).value for c in range(1, ws.max_column + 1)}
             rows.append(PartnerRow(row=r, cells=cells))
 

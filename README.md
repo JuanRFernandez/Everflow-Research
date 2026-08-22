@@ -83,7 +83,6 @@ uv run efe verify --against ".../..._v03.xlsx" ".../..._v04.xlsx"
 | `--round NAME` | Round id, written to column AM. Default `R2-enrich`. |
 | `--no-cache` | Ignore the page cache and refetch. |
 | `--fresh` | Ignore the resume ledger and start the round over. |
-| `--report-to-drive` | On a dry run, also copy the reports to the G: folder. |
 | `--config PATH` | Use a different config file. |
 | `-v` | Debug logging. |
 
@@ -103,8 +102,14 @@ knowing about; the rest are vocabularies you extend as you meet new sites.
 | Key | What it controls |
 |---|---|
 | `workbook_path` | The input workbook. Override per-run with `--workbook`. |
-| `output_dir` | Where `..._vNN.xlsx` and the run reports are written. |
-| `cache_dir`, `state_dir`, `dry_run_dir` | Machine state, all under gitignored `data/`. |
+| `output_dir` | The Drive folder. Receives the versioned `.xlsx` **and nothing else**. |
+| `artifacts_dir` | Everything else — run reports, decision table, CSVs, duplicates report. Local, gitignored. |
+| `cache_dir`, `state_dir`, `log_dir` | Machine state, all under gitignored `data/`. |
+
+The two are deliberately separate. A run report and a review CSV are working
+output, not deliverables, and the CSVs carry contact data that has no business
+syncing to a shared Drive folder. `config.sanity_check()` refuses a config that
+sets them to the same directory, and every run prints both paths at the end.
 
 ### How hard it crawls — raise these only with a reason
 
@@ -198,23 +203,27 @@ written — it goes to review, and you widen `email.sales_local_parts` or
 
 ## Output
 
-In the G: folder:
+**To the Drive folder (`output_dir`) — the workbook, and only the workbook:**
 
 - `YYYY-MM-DD_EFE_Alpine_Partner_Database_vNN.xlsx` — a new version, never an
   overwrite. A row is appended to `CHANGELOG`, and a new `CHANGELOG_DETAIL` sheet logs
   every cell change *and* every held-back candidate with old value, new value, source
   URL and confidence.
+
+**To `artifacts_dir` (local, gitignored) — everything else:**
+
 - `..._run_report.md` / `.json` — rows processed, fields filled, fields still TBD,
   failures with reasons, domains abandoned, rows needing a manual URL, the
   shared-domain guard table, Round-1 ledger domains revisited and why.
-- `..._changes.csv`, `..._review_queue.csv`.
-
-In `data/out/`, on **every** run — the paths are printed at the end:
-
+- `..._changes.csv` — every cell written, with its reason.
+- `..._review_queue.csv` — every held candidate and why.
 - `dry_run_<timestamp>.md` — the decision table. One row per decision: Entity, Field,
   Old, New, Confidence, Source URL, Decision reason; written and held-back alike.
 - `duplicates_<timestamp>.md` — duplicate rows with both CRM columns side by side and
   a recommended keep/drop. **Detection only, never a merge.**
+
+Both destinations are printed at the end of every run, so it is always clear which
+file went where.
 
 ### The fidelity gate
 

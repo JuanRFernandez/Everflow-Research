@@ -5,12 +5,19 @@
 # ----------------------------------------------------------------------------
 # Locations. The workbook lives on Google Drive; the repo never contains it.
 # ----------------------------------------------------------------------------
-workbook_path: "G:/My Drive/03_Business-&-Projects/Everflow Experience/05_PARTNERS_AGENCIES_B2B/2026-08-21_EFE_Alpine_Partner_Database_v03.xlsx"
+workbook_path: "G:/My Drive/03_Business-&-Projects/Everflow Experience/05_PARTNERS_AGENCIES_B2B/2026-08-21_EFE_Alpine_Partner_Database_v04.xlsx"
+# The Drive folder receives the versioned .xlsx and NOTHING ELSE.
 output_dir:    "G:/My Drive/03_Business-&-Projects/Everflow Experience/05_PARTNERS_AGENCIES_B2B"
+
+# Every process artifact stays local: run reports, the decision table, the changes
+# and review CSVs, the duplicates report. They are working output rather than
+# deliverables, and the CSVs carry contact data that should not sync to a shared
+# folder. Gitignored along with the rest of data/.
+artifacts_dir: "./data/out"
+
 cache_dir:     "./data/cache"
 state_dir:     "./data/state"
 log_dir:       "./data/logs"
-dry_run_dir:   "./data/out"
 
 # Emitted file naming: YYYY-MM-DD_EFE_Alpine_Partner_Database_vNN.xlsx
 output_basename: "EFE_Alpine_Partner_Database"

@@ -631,3 +631,98 @@ def test_an_unchanged_provenance_cell_is_not_rewritten(synthetic_config):
     )
     assert "AL" not in {p.column for p in provenance}
     assert {"AK", "AM"} <= {p.column for p in provenance}
+
+
+# ---------------------------------------------------------------------------
+# Only the workbook goes to Drive; every process artifact stays local
+# ---------------------------------------------------------------------------
+
+def test_artifacts_and_workbook_have_separate_destinations(synthetic_config):
+    assert synthetic_config.artifacts_directory != synthetic_config.output_directory
+
+
+def test_config_refuses_artifacts_in_the_drive_folder(synthetic_config):
+    """A hand-edited config must not be able to sync reports to a shared folder."""
+    synthetic_config.artifacts_dir = str(synthetic_config.output_directory)
+    synthetic_config.dry_run_dir = None
+    problems = synthetic_config.sanity_check()
+    assert any("artifacts_dir must not be the same as output_dir" in p for p in problems)
+
+
+def test_write_outputs_puts_everything_in_one_local_directory(synthetic_config):
+    from datetime import datetime as _dt
+
+    from efe.pipeline import RunOutcome
+    from efe.report import build_summary, write_outputs
+
+    view = load_workbook_view(synthetic_config)
+    outcome = RunOutcome()
+    summary = build_summary(
+        synthetic_config, view, outcome, run_id="test-artifacts", round_id="TEST",
+        started_at=_dt(2026, 8, 22, 9, 0), dry_run=True, selected=0, skipped={},
+    )
+    written = write_outputs(synthetic_config.artifacts_directory, "stem", summary, outcome)
+
+    assert set(written) == {"report", "json", "changes", "review", "decisions"}
+    for label, path in written.items():
+        assert path.parent == synthetic_config.artifacts_directory, label
+        assert path.is_file(), label
+    # Nothing reached the Drive folder.
+    assert list(synthetic_config.output_directory.glob("*.md")) == []
+    assert list(synthetic_config.output_directory.glob("*.csv")) == []
+    assert list(synthetic_config.output_directory.glob("*.json")) == []
+
+
+def test_a_real_write_sends_only_the_xlsx_to_the_output_dir(synthetic_config):
+    view = load_workbook_view(synthetic_config)
+    written = write_enriched(
+        synthetic_config, view,
+        [change(2, "I", "general_email", "info@summitlodge.example")],
+        run_id="test-split",
+    )
+    assert written.parent == synthetic_config.output_directory
+    emitted = sorted(p.name for p in synthetic_config.output_directory.iterdir())
+    assert emitted == [written.name], f"Drive folder should hold only the workbook: {emitted}"
+
+
+# ---------------------------------------------------------------------------
+# Spreadsheet apps pad the used range; that is cosmetic
+# ---------------------------------------------------------------------------
+
+def test_trailing_empty_rows_do_not_fail_the_schema_check(synthetic_config,
+                                                          synthetic_workbook):
+    """A Google Sheets round trip left the real workbook reporting 1000 rows."""
+    from efe.workbook.reader import last_data_row
+
+    wb = load_workbook(synthetic_workbook)
+    ws = wb["PARTNERS"]
+    real_last = ws.max_row
+    # Pad the used range the way a spreadsheet app does: cells that exist in the
+    # sheet XML but hold nothing. The key columns (ID, Entity_Name) stay untouched.
+    for row in range(real_last + 1, real_last + 400):
+        ws.cell(row, 4).value = ""
+    wb.save(synthetic_workbook)
+    wb.close()
+
+    reopened = load_workbook(synthetic_workbook)
+    assert reopened["PARTNERS"].max_row > real_last, "the fixture must actually be padded"
+    assert last_data_row(reopened["PARTNERS"], synthetic_config.workbook) == real_last
+    reopened.close()
+
+    # The schema check passes, and only the real rows are loaded.
+    view = load_workbook_view(synthetic_config)
+    assert len(view.rows) == real_last - 1
+    assert all(r.get("B") for r in view.rows), "no blank rows should be loaded"
+
+
+def test_a_genuinely_short_sheet_still_fails(synthetic_config, synthetic_workbook):
+    """Tolerating trailing blanks must not tolerate missing data."""
+    wb = load_workbook(synthetic_workbook)
+    ws = wb["PARTNERS"]
+    for column in range(1, ws.max_column + 1):
+        ws.cell(ws.max_row, column).value = None
+    wb.save(synthetic_workbook)
+    wb.close()
+
+    with pytest.raises(SchemaMismatchError, match="holds data to row"):
+        load_workbook_view(synthetic_config)
