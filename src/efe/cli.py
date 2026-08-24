@@ -72,6 +72,14 @@ def build_parser() -> argparse.ArgumentParser:
     enrich.add_argument(
         "--fresh", action="store_true", help="ignore the resume ledger and start over"
     )
+    enrich.add_argument(
+        "--categories", default=None, metavar="1,2,3|all",
+        help="override selection.categories for this run; 'all' clears the filter",
+    )
+    enrich.add_argument(
+        "--resorts", default=None, metavar="A,B|all",
+        help="override selection.resorts for this run; 'all' clears the filter",
+    )
 
     check = subparsers.add_parser(
         "check", help="validate the workbook is readable and matches the schema"
@@ -196,8 +204,23 @@ def cmd_duplicates(args: argparse.Namespace) -> int:
     return 0
 
 
+def _apply_target_overrides(cfg, args) -> None:
+    """CLI targeting beats config for one run. 'all' clears a filter."""
+    if getattr(args, "categories", None) is not None:
+        cfg.selection.categories = (
+            [] if args.categories.strip().lower() == "all"
+            else [f"{c.strip().rstrip('.')}." for c in args.categories.split(",") if c.strip()]
+        )
+    if getattr(args, "resorts", None) is not None:
+        cfg.selection.resorts = (
+            [] if args.resorts.strip().lower() == "all"
+            else [r.strip() for r in args.resorts.split(",") if r.strip()]
+        )
+
+
 def cmd_enrich(args: argparse.Namespace) -> int:
     cfg = config_mod.load(args.config)
+    _apply_target_overrides(cfg, args)
     started_at = datetime.now()
     run_id = started_at.strftime("%Y%m%d-%H%M%S")
     round_id = args.round_id or cfg.selection.round_tag
@@ -217,9 +240,15 @@ def cmd_enrich(args: argparse.Namespace) -> int:
         f"[bold]{run_id}[/bold]  round={round_id}  "
         f"{'DRY RUN' if args.dry_run else 'WRITE'}"
     )
+    targets = []
+    if cfg.selection.categories:
+        targets.append(f"categories={','.join(cfg.selection.categories)}")
+    if cfg.selection.resorts:
+        targets.append(f"resorts={len(cfg.selection.resorts)} objetivo")
     console.print(
         f"  {selected_total} rows selected of {len(view.rows)}; "
         f"processing {len(candidates)} this run"
+        + (f"  [dim]({'; '.join(targets)})[/dim]" if targets else "")
     )
     console.print(
         f"  politeness: 1 request / {cfg.fetch.per_domain_delay_seconds}s per domain, "

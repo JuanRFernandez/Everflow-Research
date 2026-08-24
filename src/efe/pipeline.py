@@ -23,6 +23,7 @@ from selectolax.parser import HTMLParser
 from efe.config import Config
 from efe.extract import classify as classify_mod
 from efe.extract import emails as emails_mod
+from efe.extract import forms as forms_mod
 from efe.extract import impressum as impressum_mod
 from efe.extract import persons as persons_mod
 from efe.extract import phones as phones_mod
@@ -307,6 +308,8 @@ class Enricher:
         region = phones_mod.region_for(candidate.country, candidate.domain, self.cfg.phone)
 
         shared = self.guard.is_shared(candidate.domain)
+        form_page: FetchedPage | None = None
+        form_find = None
 
         for page in pages:
             if not page.usable:
@@ -322,12 +325,65 @@ class Enricher:
                 values += self._from_impressum(candidate, page, contact_body, region)
 
             values += self._emails(candidate, page, contact_body, chrome_stripped=shared)
+
+            # Contact forms: remembered per page; only becomes a value if the whole
+            # site yields no email at all. A contact page beats the homepage.
+            if page.kind in (PageKind.CONTACT, PageKind.HOME) and (
+                form_page is None or (page.kind is PageKind.CONTACT
+                                      and form_page.kind is PageKind.HOME)
+            ):
+                found = forms_mod.detect_contact_form(contact_body)
+                if found is not None:
+                    form_page, form_find = page, found
             values += self._phones(page, contact_body, region, chrome_stripped=shared)
             values += self._socials(candidate, page, body)
             values += self._persons(page, contact_body)
             values += self._terms(page, body)
 
+        values += self._form_only(candidate, values, form_page, form_find)
         return values
+
+    def _form_only(
+        self, candidate: Candidate, values: list[ExtractedValue],
+        form_page: FetchedPage | None, form_find,
+    ) -> list[ExtractedValue]:
+        """The FORM-ONLY sentinel: a real fact, never a guessed address.
+
+        Written only when the site offers a contact form and no usable email was
+        found anywhere, the cell holds nothing better, and the page passed the
+        sibling guard. Because FORM-ONLY sits in `empty_tokens`, a real address
+        found on a later run replaces it.
+        """
+        if form_page is None or form_find is None:
+            return []
+        if not self.cfg.confidence.form_only_when_no_email:
+            return []
+        if any(
+            v.field in (Field_.GENERAL_EMAIL, Field_.SALES_B2B_EMAIL) and v.writable
+            for v in values
+        ):
+            return []
+        existing = candidate.existing.get("general_email", "")
+        if existing.strip().upper() == forms_mod.FORM_ONLY:
+            return []  # already recorded; nothing new to say
+        if form_page.scope.verdict is ScopeVerdict.SHARED_UNMATCHED:
+            return []
+        return [
+            ExtractedValue(
+                field=Field_.GENERAL_EMAIL,
+                value=forms_mod.FORM_ONLY,
+                confidence=Confidence.HIGH,
+                data_class=DataClass.CORPORATE_ROLE,
+                evidence=self._evidence(form_page, form_find),
+                extractor="forms.contact-form",
+                reason=(
+                    "the site publishes a contact form and no email address was "
+                    "found on any fetched page; FORM-ONLY records that fact and "
+                    "stays replaceable by a real address"
+                ),
+                scope=form_page.scope.verdict,
+            )
+        ]
 
     def _from_impressum(
         self, candidate: Candidate, page: FetchedPage, body: str, region: str | None

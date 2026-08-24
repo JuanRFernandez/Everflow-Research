@@ -118,6 +118,8 @@ uv run efe verify --against ".../..._v03.xlsx" ".../..._v04.xlsx"
 | `--rows A:B` | Restrict to worksheet rows A–B inclusive. |
 | `--workbook PATH` | Override `workbook_path` for one run. |
 | `--round NAME` | Round id, written to column AM. Default `R2-enrich`. |
+| `--categories 1,2,3` | Override `selection.categories` for one run; `all` clears the filter. |
+| `--resorts A,B` | Override `selection.resorts`; accent/umlaut-insensitive; `all` clears. |
 | `--no-cache` | Ignore the page cache and refetch. |
 | `--fresh` | Ignore the resume ledger and start the round over. |
 | `--config PATH` | Use a different config file. |
@@ -214,6 +216,17 @@ observed pattern. Every value carries its source URL, fetch timestamp and the ra
 matched substring; the writer refuses anything missing one.
 
 **Never overwrites.** A cell holding anything other than `TBD` is left alone.
+
+**FORM-ONLY.** When a site publishes a contact form and no email address exists on
+any fetched page, `General_Email` gets the sentinel `FORM-ONLY` — a sourced fact
+(the form page is the Source_URL), never a guessed address. It sits in
+`empty_tokens`, so a real address found on a later run replaces it. Search, login
+and newsletter forms do not count.
+
+**Targeting.** `selection.categories` / `selection.resorts` in `config.yaml` scope a
+round (currently: categories 1–3 across the GaPa · Arlberg · Kitzbühel · Innsbruck ·
+Zell–Kaprun corridor). Rows outside the targets are skipped with an explicit reason;
+`--categories all --resorts all` runs everything.
 
 **Never touches the CRM.** Columns Z–AJ (`Contacted` … `Next_Action`) are yours.
 `AC` / `Next_Follow_Up` is a live formula, preserved with its cached result.

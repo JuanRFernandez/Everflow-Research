@@ -205,6 +205,10 @@ def synthetic_config(tmp_path: Path, synthetic_workbook: Path):
     raw["workbook"]["expected_formula_count"] = len(SYNTHETIC_ROWS) + 3
     # The synthetic workbook is ~10 KB; the real one is ~105 KB.
     raw["workbook"]["min_plausible_bytes"] = 4000
+    # The live config ships with hotel targeting active; the legacy fixtures test
+    # the unfiltered pipeline, so the synthetic config clears the filters.
+    raw["selection"]["categories"] = []
+    raw["selection"]["resorts"] = []
     raw["scope"]["chain_domains"] = ["grandclass.example"]
 
     (tmp_path / "out").mkdir(exist_ok=True)

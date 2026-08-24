@@ -29,12 +29,12 @@ workbook:
   sheet: "PARTNERS"
   header_row: 1
   first_data_row: 2
-  expected_last_row: 254        # 253 data rows
+  expected_last_row: 251        # 250 data rows: 3 duplicate rows deleted 2026-08-24
   expected_last_col: "AM"       # 39 columns
   expected_sheets:
     [READ_ME, DASHBOARD, PARTNERS, RESORTS_SBI, PRICING_BENCH, REGULATORY,
      _SOURCES, _GAPS_ROUND2, CHANGELOG]
-  expected_formula_count: 491
+  expected_formula_count: 488   # 3 AC formulas left with the deleted rows
   # A file smaller than this cannot be the real workbook: Google Drive is still
   # syncing and has handed back a placeholder. The real v03 is ~105 KB.
   min_plausible_bytes: 50000
@@ -42,7 +42,10 @@ workbook:
   changelog_detail_sheet: "CHANGELOG_DETAIL"
   tbd_token: "TBD"
   # Values that mean "no data yet" and may therefore be filled.
-  empty_tokens: ["", "TBD", "N/A", "-"]
+  # FORM-ONLY = the site publishes a contact form and no address. It is a real,
+  # sourced fact (never an invented email) and stays in empty_tokens so a real
+  # address found later can replace it.
+  empty_tokens: ["", "TBD", "N/A", "-", "FORM-ONLY"]
 
   columns:
     id:            "A"
@@ -90,7 +93,19 @@ selection:
     - column: "Z"          # Contacted
       values: ["YES"]
   require_website: true
-  round_tag: "R2-enrich"   # written to AM on changed rows
+  round_tag: "R3-hotels"   # written to AM on changed rows
+
+  # --- Targeting. Empty lists mean "all rows"; the CLI can override per run
+  # --- (--categories / --resorts, value "all" clears a filter).
+  # Category is matched by numeric prefix against column C ("1." matches "1. Hotels").
+  categories: ["1.", "2.", "3."]
+  # Resorts match accent- and umlaut-insensitively against Resort_Base and
+  # Region_Valley: "Kitzbühel" finds "Kitzbuehel", "St. Anton" finds
+  # "St Anton am Arlberg".
+  resorts:
+    [Garmisch, Grainau, Elmau, Lech, "Zürs", "St. Anton", "St. Christoph",
+     "Kitzbühel", Jochberg, Going, Seefeld, Innsbruck, Neustift, Stubai,
+     "Zell am See", Kaprun]
 
 # ----------------------------------------------------------------------------
 # Fetching. Several of these companies are future partners: do not hammer them.
@@ -380,6 +395,9 @@ confidence:
   # sending risk, so a link published on the entity's own domain counts as high.
   # Set false to hold socials for review like everything else.
   social_on_own_domain_is_high: true
+  # When a contact/home page offers a contact form and no email was found anywhere,
+  # write the sentinel "FORM-ONLY" to General_Email (with the form page as source).
+  form_only_when_no_email: true
   # Many small businesses publish info@ only in the homepage footer and have no
   # /contact page at all, so a homepage role address counts as high.
   # This applies ONLY when the address is on the entity's own domain. A third-party

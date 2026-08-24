@@ -87,6 +87,11 @@ class SelectionConfig(BaseModel):
     skip_when: list[SkipRule] = Field(default_factory=list)
     require_website: bool = True
     round_tag: str = "R2-enrich"
+    #: Category prefixes ("1." matches "1. Hotels"). Empty = all categories.
+    categories: list[str] = Field(default_factory=list)
+    #: Resort names, matched accent/umlaut-insensitively against Resort_Base and
+    #: Region_Valley. Empty = all resorts.
+    resorts: list[str] = Field(default_factory=list)
 
 
 class FetchConfig(BaseModel):
@@ -173,6 +178,7 @@ class ConfidenceConfig(BaseModel):
     medium_page_kinds: list[str]
     social_on_own_domain_is_high: bool = True
     homepage_role_email_is_high: bool = False
+    form_only_when_no_email: bool = True
 
 
 class GdprConfig(BaseModel):

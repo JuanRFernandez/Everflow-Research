@@ -431,6 +431,41 @@ def load_workbook_view(cfg: Config, path: Path | None = None) -> WorkbookView:
 # Selection
 # ---------------------------------------------------------------------------
 
+def _resort_forms(text: str) -> tuple[str, str]:
+    """Two comparison forms of a resort/place name, flattened to alnum.
+
+    German places are spelled both ways in the sheet -- `Kitzbühel` and
+    `Kitzbuehel`, `Zürs` and `Zurs` -- so a name matches if either its
+    umlaut-expanded form (ü->ue) or its plain accent-stripped form (ü->u) is a
+    substring of either form of the cell.
+    """
+    import re as _re
+    import unicodedata as _ud
+
+    lowered = (text or "").lower()
+    expanded = (lowered.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue")
+                .replace("ß", "ss"))
+
+    def flat(s: str) -> str:
+        s = _ud.normalize("NFKD", s)
+        s = "".join(ch for ch in s if not _ud.combining(ch))
+        return _re.sub(r"[^a-z0-9]", "", s)
+
+    return flat(expanded), flat(lowered)
+
+
+def resort_matches(cell_text: str, wanted: list[str]) -> bool:
+    """Whether a Resort_Base / Region_Valley cell names one of the target resorts."""
+    if not wanted:
+        return True
+    cell_forms = _resort_forms(cell_text)
+    for name in wanted:
+        for want in _resort_forms(name):
+            if want and any(want in c for c in cell_forms):
+                return True
+    return False
+
+
 NEEDS_MANUAL_URL_REASON = (
     "needs_manual_url: this domain refuses automated access (403/TLS), so the row "
     "needs a property-level Website_URL before it can be enriched"
@@ -477,6 +512,23 @@ def select_candidates(
         if domain in blocked or any(domain.endswith("." + d) for d in blocked):
             skipped[pr.row] = NEEDS_MANUAL_URL_REASON
             continue
+
+        if cfg.selection.categories:
+            category = pr.logical(cfg, "category").strip()
+            if not any(category.startswith(p) for p in cfg.selection.categories):
+                skipped[pr.row] = (
+                    f"outside the target categories {cfg.selection.categories} "
+                    "(selection.categories; override with --categories all)"
+                )
+                continue
+        if cfg.selection.resorts:
+            place = f"{pr.logical(cfg, 'resort_base')} {pr.logical(cfg, 'region_valley')}"
+            if not resort_matches(place, cfg.selection.resorts):
+                skipped[pr.row] = (
+                    "outside the target resorts (selection.resorts; "
+                    "override with --resorts all)"
+                )
+                continue
 
         existing = {f: pr.logical(cfg, f) for f in ENRICHABLE_FIELDS}
         if all(not spec.is_empty(v) for v in existing.values()):
