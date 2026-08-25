@@ -130,7 +130,10 @@ uv run efe verify --against ".../..._v03.xlsx" ".../..._v04.xlsx"
 
 **Resuming.** A run that dies at row 140 restarts at 140 — state lives in
 `data/state/ledger-<round>.jsonl`, and the workbook is written once at the end, so a
-crash mid-crawl never leaves a half-written file.
+crash mid-crawl never leaves a half-written file. A dry run keeps its own ledger
+(`ledger-<round>-dryrun.jsonl`), so it never marks rows as done for the real run;
+and when a run does skip rows the ledger already covers, it says so and points at
+`--fresh` rather than reporting that nothing met the threshold.
 
 ---
 

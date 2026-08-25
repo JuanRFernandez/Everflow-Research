@@ -361,6 +361,24 @@ def _apply_target_overrides(cfg, args) -> None:
         )
 
 
+def ledger_for(cfg, round_id: str, run_id: str, *, dry_run: bool) -> RunLedger:
+    """The resume ledger for this run. A dry run keeps its own, so it never marks
+    rows as done for the real run that follows it."""
+    return RunLedger(cfg.state_directory, f"{round_id}-dryrun" if dry_run else round_id, run_id)
+
+
+def report_resumed(selected: int, processed: int, ledger: RunLedger, round_id: str) -> int:
+    """Say out loud how many rows the resume ledger skipped; return that count."""
+    resumed = max(0, selected - processed)
+    if resumed:
+        console.print(
+            f"  [yellow]{resumed} of {selected} rows skipped: already completed in the "
+            f"resume ledger for round {round_id} ({ledger.progress_path.name}). "
+            "Pass --fresh to redo them.[/yellow]"
+        )
+    return resumed
+
+
 def cmd_enrich(args: argparse.Namespace) -> int:
     cfg = config_mod.load(args.config)
     _apply_target_overrides(cfg, args)
@@ -412,7 +430,7 @@ def cmd_enrich(args: argparse.Namespace) -> int:
         f"max {cfg.fetch.max_pages_per_entity} pages per entity\n"
     )
 
-    ledger = RunLedger(cfg.state_directory, round_id, run_id)
+    ledger = ledger_for(cfg, round_id, run_id, dry_run=args.dry_run)
     if args.fresh:
         ledger.reset()
 
@@ -436,6 +454,7 @@ def cmd_enrich(args: argparse.Namespace) -> int:
     )
 
     console.print()
+    resumed = report_resumed(len(candidates), len(outcome.results), ledger, round_id)
     if args.dry_run:
         print_dry_run(console, cfg, outcome)
 
@@ -469,9 +488,16 @@ def cmd_enrich(args: argparse.Namespace) -> int:
 
     if not outcome.changes:
         print_summary(console, summary)
-        console.print(
-            "\n[yellow]Nothing met the write threshold, so no workbook was emitted.[/yellow]"
-        )
+        if resumed and not outcome.results:
+            console.print(
+                "\n[yellow]Nothing was processed, so no workbook was emitted: every "
+                "selected row is marked complete in the resume ledger. Pass --fresh "
+                "to redo them.[/yellow]"
+            )
+        else:
+            console.print(
+                "\n[yellow]Nothing met the write threshold, so no workbook was emitted.[/yellow]"
+            )
         stem = f"{today_iso()}_NOWRITE_{run_id}"
         written = write_outputs(cfg.artifacts_directory, stem, summary, outcome)
         written["duplicates"] = duplicates_path

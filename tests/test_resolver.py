@@ -564,3 +564,21 @@ def test_enrich_records_the_emitted_version_as_baseline(synthetic_config, capsys
     text = capsys.readouterr().out
     assert rc == 0, text
     assert "not behind the baseline" in text
+
+
+def test_dry_run_keeps_its_own_resume_ledger(synthetic_config, capsys, monkeypatch):
+    from efe.cli import ledger_for, report_resumed
+
+    monkeypatch.setenv("COLUMNS", "200")
+    dry = ledger_for(synthetic_config, "R3-hotels", "run-1", dry_run=True)
+    real = ledger_for(synthetic_config, "R3-hotels", "run-2", dry_run=False)
+    assert dry.progress_path.name == "progress-R3-hotels-dryrun.json"
+    assert real.progress_path.name == "progress-R3-hotels.json"
+    dry.mark_complete({"EFE-0001"})
+    assert real.completed_entities() == set()  # the real run starts untouched
+
+    assert report_resumed(27, 0, real, "R3-hotels") == 27
+    text = capsys.readouterr().out
+    assert "27 of 27 rows skipped" in text and "--fresh" in text
+    assert report_resumed(27, 27, real, "R3-hotels") == 0
+    assert capsys.readouterr().out.strip() == ""
