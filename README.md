@@ -287,6 +287,50 @@ tool writes feeds any formula (`assert_no_precedents_touched` enforces that prem
 
 ---
 
+## Discovery (ad hoc): `scripts/discover_hotels.py`
+
+The enricher fills fields on rows that exist. Finding *new* rows is discovery, which
+ARCHITECTURE.md §7 places in Phase 2 behind a repeatable `resort_directory` plugin.
+`scripts/discover_hotels.py` is the one-off precursor: it reads the official
+tourism-board pages of the hotel corridor (GaPa, Arlberg, Kitzbühel, Seefeld,
+Innsbruck, Stubai, Zell-Kaprun) and emits **candidates**, never workbook rows.
+
+```bash
+uv run python scripts/discover_hotels.py
+# -> data/out/<date>_hotel_candidates.csv  (+ _detail.csv with the discards and why)
+```
+
+Rules it shares with the enricher: nothing is invented. A candidate carries only what
+the source page literally publishes — name, the website it links to, the stars it
+states, the postcode line it prints — plus the page URL as `Source_URL`. On pages that
+list several properties a link only counts as a property's website when a
+distinguishing token of the name appears in the domain; on single-property fiches the
+link the page labels as the website wins, then name affinity, and vendor credits
+(architects, agencies, builders) are never taken. Otherwise the row is marked
+`[SIN WEB]`. `Segment_Tier` comes only from published stars (5* → luxury, 4*S →
+premium, 4* → mid-premium); anything else stays TBD. Candidates already in PARTNERS
+(by domain or folded name) are dropped and listed in the detail file, as are internal
+duplicates (same domain, or a contained name within the same resort).
+
+Two rules keep boards from leaking their own data into rows. The property's town is
+the **first** postcode line in document order after nav/footer chrome is removed — a
+page whose own address lies outside the corridor is dropped rather than rescued by the
+board's footer address (Tirol Werbung's "6020 Innsbruck" once turned Sölden into
+Innsbruck). And names lose their editorial framing only where it is unambiguous:
+"Wellness im Hotel X", "Restaurant im Landhotel Y", "Seminarraum Hotel Z",
+"4-Sterne-Hotel …", a trailing " - Après Ski"; everything else stays verbatim for the
+human to judge.
+
+The accommodation *search* widgets on these boards are JavaScript (Feratel/Deskline)
+and yield nothing — so do Lech-Zürs' per-property fiches, Stubai's hotel list and
+Wilder Kaiser's Next.js pages; the script uses editorial pages, static property fiches
+(tirol.at, alpenwelt-karwendel.de, vorarlberg.travel, zugspitz-region.de) and, for
+Zell am See–Kaprun, the POI fiches hosted by hotels (day spa, restaurant, seminar
+room), which print the hotel's own address and a labelled website link. IDs start at
+EFE-0359 and `Round` is `R3-discovery`. Promotion is human: paste the rows you approve
+into the sheet (as `.xlsx`, not a native Sheet), download, and run `efe enrich` to
+fill contacts.
+
 ## Tests
 
 ```bash
