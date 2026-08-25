@@ -5,9 +5,15 @@
 # ----------------------------------------------------------------------------
 # Locations. The workbook lives on Google Drive; the repo never contains it.
 # ----------------------------------------------------------------------------
-workbook_path: "G:/My Drive/03_Business-&-Projects/Everflow Experience/05_PARTNERS_AGENCIES_B2B/2026-08-21_EFE_Alpine_Partner_Database_v04.xlsx"
-# The Drive folder receives the versioned .xlsx and NOTHING ELSE.
-output_dir:    "G:/My Drive/03_Business-&-Projects/Everflow Experience/05_PARTNERS_AGENCIES_B2B"
+# The FOLDER, never a file. At run time the highest
+# <date>_EFE_Alpine_Partner_Database_vNN.xlsx in it is chosen (date with or without
+# dashes; *SUPERSEDED*, ~$ lock files and sync placeholders excluded; ties broken by
+# mtime), the choice is logged, and the output goes back here as vNN+1 -- so the next
+# run picks it up without any edit. `efe ... --workbook <file>` overrides for one run.
+workbook_dir: "G:/My Drive/03_Business-&-Projects/Everflow Experience/05_PARTNERS_AGENCIES_B2B"
+# Where the emitted workbook goes. Omitted = workbook_dir. The Drive folder
+# receives the versioned .xlsx and NOTHING ELSE.
+# output_dir: (same as workbook_dir)
 
 # Every process artifact stays local: run reports, the decision table, the changes
 # and review CSVs, the duplicates report. They are working output rather than
@@ -23,21 +29,37 @@ log_dir:       "./data/logs"
 output_basename: "EFE_Alpine_Partner_Database"
 
 # ----------------------------------------------------------------------------
-# Workbook schema. Verified against v03 on 2026-08-21.
+# Workbook contract. Invariants, never constants: no filename, no row count, no
+# formula count, no column letters. A new version needs no edit here.
 # ----------------------------------------------------------------------------
 workbook:
   sheet: "PARTNERS"
   header_row: 1
   first_data_row: 2
-  expected_last_row: 251        # 250 data rows: 3 duplicate rows deleted 2026-08-24
-  expected_last_col: "AM"       # 39 columns
-  expected_sheets:
+
+  # The 39 PARTNERS column names, exact and in order. Letters are derived from this
+  # at run time; a workbook whose header differs is refused with a diff.
+  header:
+    [ID, Entity_Name, Category, Subcategory, Resort_Base, Region_Valley, Country,
+     Website_URL, General_Email, Sales_B2B_Email, Phone, WhatsApp,
+     Contact_Person_Name, Contact_Person_Role, LinkedIn_URL, Instagram_Handle,
+     Segment_Tier, Star_Rating_or_Class, Capacity_Keys_or_Beds, B2B_Program_Exists,
+     Commission_or_Partner_Terms, Languages_Served, Owner_or_Group_Affiliation,
+     Strategic_Fit_Note, Priority_Score, Contacted, Contact_Date, Follow_Up_Days,
+     Next_Follow_Up, Email_Sent, Call_Made, WhatsApp_Sent, Meeting_Booked,
+     Agreement_Signed, Status, Next_Action, Source_URL, Date_Verified, Round]
+
+  # Sheets that must exist. Extra sheets and a different order are tolerated.
+  required_sheets:
     [READ_ME, DASHBOARD, PARTNERS, RESORTS_SBI, PRICING_BENCH, REGULATORY,
-     _SOURCES, _GAPS_ROUND2, CHANGELOG]
-  expected_formula_count: 488   # 3 AC formulas left with the deleted rows
+     _SOURCES, _GAPS_ROUND2, CHANGELOG, CHANGELOG_DETAIL]
+
   # A file smaller than this cannot be the real workbook: Google Drive is still
-  # syncing and has handed back a placeholder. The real v03 is ~105 KB.
+  # syncing and has handed back a placeholder. v05 is ~700 KB.
   min_plausible_bytes: 50000
+  # A filename carrying any of these is never chosen by the resolver.
+  exclude_name_tokens: [SUPERSEDED]
+
   changelog_sheet: "CHANGELOG"
   changelog_detail_sheet: "CHANGELOG_DETAIL"
   tbd_token: "TBD"
@@ -47,41 +69,51 @@ workbook:
   # address found later can replace it.
   empty_tokens: ["", "TBD", "N/A", "-", "FORM-ONLY"]
 
+  # Logical field -> header name. The code never sees a letter.
   columns:
-    id:            "A"
-    entity_name:   "B"
-    category:      "C"
-    subcategory:   "D"
-    resort_base:   "E"
-    region_valley: "F"
-    country:       "G"
-    website_url:   "H"
-    general_email: "I"
-    sales_b2b_email: "J"
-    phone:         "K"
-    whatsapp:      "L"
-    contact_person_name: "M"
-    contact_person_role: "N"
-    linkedin_url:  "O"
-    instagram_handle: "P"
-    segment_tier:  "Q"
-    b2b_program_exists: "T"
-    commission_terms: "U"
-    priority_score: "Y"
-    contacted:     "Z"
-    status:        "AI"
-    source_url:    "AK"
-    date_verified: "AL"
-    round:         "AM"
+    id:                  ID
+    entity_name:         Entity_Name
+    category:            Category
+    subcategory:         Subcategory
+    resort_base:         Resort_Base
+    region_valley:       Region_Valley
+    country:             Country
+    website_url:         Website_URL
+    general_email:       General_Email
+    sales_b2b_email:     Sales_B2B_Email
+    phone:               Phone
+    whatsapp:            WhatsApp
+    contact_person_name: Contact_Person_Name
+    contact_person_role: Contact_Person_Role
+    linkedin_url:        LinkedIn_URL
+    instagram_handle:    Instagram_Handle
+    segment_tier:        Segment_Tier
+    b2b_program_exists:  B2B_Program_Exists
+    commission_terms:    Commission_or_Partner_Terms
+    priority_score:      Priority_Score
+    contacted:           Contacted
+    status:              Status
+    source_url:          Source_URL
+    date_verified:       Date_Verified
+    round:               Round
 
   # The only columns the enricher may ever write.
-  writable_columns: [I, J, K, L, M, N, O, P, U]
+  writable_columns:
+    [General_Email, Sales_B2B_Email, Phone, WhatsApp, Contact_Person_Name,
+     Contact_Person_Role, LinkedIn_URL, Instagram_Handle, Commission_or_Partner_Terms]
   # Provenance columns: written only on rows where >=1 writable column changed.
-  provenance_columns: [AK, AL, AM]
+  provenance_columns: [Source_URL, Date_Verified, Round]
   # Human-owned CRM columns. Writing to any of these is a hard error.
-  crm_columns: [Z, AA, AB, AC, AD, AE, AF, AG, AH, AI, AJ]
-  # AC (Next_Follow_Up) is a live formula; never touched.
-  formula_columns: [AC]
+  crm_columns:
+    [Contacted, Contact_Date, Follow_Up_Days, Next_Follow_Up, Email_Sent, Call_Made,
+     WhatsApp_Sent, Meeting_Booked, Agreement_Signed, Status, Next_Action]
+  # Live formulas: must hold a formula on EVERY data row; never touched.
+  formula_columns: [Next_Follow_Up]
+  # Columns that feed live formulas (DASHBOARD COUNTIFs over PARTNERS, and
+  # Next_Follow_Up = Contact_Date + Follow_Up_Days). The writer preserves cached
+  # formula results, so writing any of these would leave a stale result behind.
+  formula_precedents:
+    [Category, Country, Priority_Score, Contacted, Status, Contact_Date, Follow_Up_Days]
 
 # ----------------------------------------------------------------------------
 # Row selection
@@ -90,7 +122,7 @@ selection:
   # Rows where this column holds one of these values are skipped entirely
   # (no fetch, no write). These are the human-verified "gold" rows.
   skip_when:
-    - column: "Z"          # Contacted
+    - column: "Contacted"
       values: ["YES"]
   require_website: true
   round_tag: "R3-hotels"   # written to AM on changed rows

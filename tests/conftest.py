@@ -170,6 +170,20 @@ def synthetic_workbook(tmp_path: Path) -> Path:
     changelog["A4"], changelog["B4"] = "v01", "2026-08-21"
     changelog["C4"], changelog["D4"] = "Initial synthetic build.", "tests"
 
+    # The real workbook already carries the audit sheet from the previous run
+    # (a required sheet since v05); the writer appends to it rather than creating it.
+    from efe.workbook.writer import CHANGELOG_DETAIL_HEADERS
+
+    detail = wb.create_sheet("CHANGELOG_DETAIL")
+    for index, title in enumerate(CHANGELOG_DETAIL_HEADERS, start=1):
+        detail.cell(1, index).value = title
+    prior = ["2026-08-21T10:00:00", "20260821-100000", 2, "EFE-0001", "Summit Lodge Verbier",
+             "K", "phone", "TBD", "+41 27 000 00 00", "high", "corporate_role",
+             "https://summitlodge.example/contact", "2026-08-21T09:59:00",
+             "phones.text", "prior run"]
+    for index, value in enumerate(prior, start=1):
+        detail.cell(2, index).value = value
+
     path = tmp_path / "2026-08-21_EFE_Alpine_Partner_Database_v01.xlsx"
     wb.save(path)
     wb.close()
@@ -194,16 +208,17 @@ def synthetic_config(tmp_path: Path, synthetic_workbook: Path):
     repo_config = Path(__file__).resolve().parents[1] / "config.yaml"
     raw = yaml.safe_load(repo_config.read_text(encoding="utf-8"))
 
-    raw["workbook_path"] = str(synthetic_workbook).replace("\\", "/")
+    # The synthetic workbook sits alone in tmp_path as `..._v01.xlsx`, so the
+    # resolver picks it exactly as it would pick the real one in the Drive folder.
+    raw.pop("workbook_path", None)
+    raw["workbook_dir"] = str(synthetic_workbook.parent).replace("\\", "/")
     raw["output_dir"] = str(tmp_path / "out").replace("\\", "/")
     raw["cache_dir"] = str(tmp_path / "cache").replace("\\", "/")
     raw["state_dir"] = str(tmp_path / "state").replace("\\", "/")
     raw["log_dir"] = str(tmp_path / "logs").replace("\\", "/")
     raw["artifacts_dir"] = str(tmp_path / "artifacts").replace("\\", "/")
     raw.pop("dry_run_dir", None)
-    raw["workbook"]["expected_last_row"] = 1 + len(SYNTHETIC_ROWS)
-    raw["workbook"]["expected_formula_count"] = len(SYNTHETIC_ROWS) + 3
-    # The synthetic workbook is ~10 KB; the real one is ~105 KB.
+    # The synthetic workbook is ~10 KB; the real one is ~700 KB.
     raw["workbook"]["min_plausible_bytes"] = 4000
     # The live config ships with hotel targeting active; the legacy fixtures test
     # the unfiltered pipeline, so the synthetic config clears the filters.

@@ -835,21 +835,36 @@ def to_cell_change(
     *, written: bool
 ) -> CellChange:
     column_key = FIELD_TO_COLUMN_KEY[field_name]
+    current = candidate.existing.get(column_key, "")
+    if written:
+        note = value.reason
+    else:
+        # A writable value can still be held: the cell was already filled (by a
+        # human, typically), or another value won it. Say which, so the review
+        # queue does not read as a list of rejections.
+        why = value.held_back_reason
+        if not why:
+            why = (
+                f"cell already holds {current!r} - kept as an alternate, never overwritten"
+                if not cfg.workbook.is_empty(current)
+                else "not chosen: another value won this cell, or name and role came "
+                "from different pages"
+            )
+        note = f"HELD FOR REVIEW - {why} | {value.reason}"
     return CellChange(
         row=candidate.row,
         column=cfg.workbook.column_for(column_key),
         field=column_key,
         entity_id=candidate.entity_id,
         entity_name=candidate.name,
-        old_value=candidate.existing.get(column_key, ""),
+        old_value=current,
         new_value=value.value,
         confidence=value.confidence,
         data_class=value.data_class,
         source_url=value.evidence.source_url,
         fetched_at=value.evidence.fetched_at,
         extractor=value.extractor,
-        note=value.reason if written else f"HELD FOR REVIEW - {value.held_back_reason}"
-                                          f" | {value.reason}",
+        note=note,
     )
 
 

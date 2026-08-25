@@ -2,6 +2,12 @@
 
 Every tunable lives in `config.yaml`. Nothing in this package hardcodes a path, a
 rate limit, a column letter or a keyword list.
+
+The workbook section describes the *contract* -- the ordered column names, the
+sheets that must exist, which columns may be written -- and never a particular
+file: no filename, no row count, no formula count, no column letters. The file is
+resolved from the Drive folder at run time (`efe.workbook.resolve`) and the letters
+are derived from the header names, so a new version never needs a config edit.
 """
 
 from __future__ import annotations
@@ -11,64 +17,180 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from openpyxl.utils import get_column_letter
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 # The repo ships `config.yaml`; `config.yml` is accepted as an alias because
 # docs/ARCHITECTURE.md refers to it by that name.
 CONFIG_FILENAMES = ("config.yaml", "config.yml")
 
+#: Logical fields the code addresses by name. Every one must map to a header.
+REQUIRED_LOGICAL_FIELDS = (
+    "id",
+    "entity_name",
+    "category",
+    "subcategory",
+    "resort_base",
+    "region_valley",
+    "country",
+    "website_url",
+    "general_email",
+    "sales_b2b_email",
+    "phone",
+    "whatsapp",
+    "contact_person_name",
+    "contact_person_role",
+    "linkedin_url",
+    "instagram_handle",
+    "segment_tier",
+    "b2b_program_exists",
+    "commission_terms",
+    "priority_score",
+    "contacted",
+    "status",
+    "source_url",
+    "date_verified",
+    "round",
+)
 
-class WorkbookColumns(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-    id: str
-    entity_name: str
-    category: str
-    subcategory: str = "D"
-    resort_base: str = "E"
-    region_valley: str = "F"
-    country: str
-    website_url: str
-    general_email: str
-    sales_b2b_email: str
-    phone: str
-    whatsapp: str
-    contact_person_name: str
-    contact_person_role: str
-    linkedin_url: str
-    instagram_handle: str
-    segment_tier: str = "Q"
-    b2b_program_exists: str = "T"
-    commission_terms: str
-    priority_score: str = "Y"
-    contacted: str
-    status: str
-    source_url: str
-    date_verified: str
-    round: str
+#: Logical fields the enricher fills; each must be a writable column.
+ENRICHABLE_LOGICAL_FIELDS = (
+    "general_email",
+    "sales_b2b_email",
+    "phone",
+    "whatsapp",
+    "contact_person_name",
+    "contact_person_role",
+    "linkedin_url",
+    "instagram_handle",
+    "commission_terms",
+)
 
 
 class WorkbookConfig(BaseModel):
+    """The PARTNERS contract. Column *names* everywhere; letters are derived."""
+
+    model_config = ConfigDict(extra="forbid")
+
     sheet: str
-    header_row: int
-    first_data_row: int
-    expected_last_row: int
-    expected_last_col: str
-    expected_sheets: list[str]
-    expected_formula_count: int
+    header_row: int = 1
+    first_data_row: int = 2
+    #: Every PARTNERS column name, exactly and in order. This is the schema check.
+    header: list[str]
+    #: Sheets that must exist. Extra sheets and a different order are fine.
+    required_sheets: list[str]
+    #: Below this size a file is a Drive placeholder, not the workbook.
     min_plausible_bytes: int = 50_000
+    #: A filename carrying any of these is never chosen by the resolver.
+    exclude_name_tokens: list[str] = Field(default_factory=lambda: ["SUPERSEDED"])
     changelog_sheet: str
     changelog_detail_sheet: str
     tbd_token: str
     empty_tokens: list[str]
-    columns: WorkbookColumns
+    #: logical field -> header name.
+    columns: dict[str, str]
+    #: The only columns the enricher may write (header names).
     writable_columns: list[str]
+    #: Written only on rows where a writable column changed.
     provenance_columns: list[str]
+    #: Human-owned; writing any of these is a hard error.
     crm_columns: list[str]
+    #: Live formulas; must hold a formula on every data row, never written.
     formula_columns: list[str]
+    #: Columns that feed live formulas (here or on other sheets). Never writable:
+    #: the writer preserves cached formula results, which a change would stale.
+    formula_precedents: list[str] = Field(default_factory=list)
+
+    _letters: dict[str, str] = PrivateAttr(default_factory=dict)
+
+    # -- validation ---------------------------------------------------------
+    @model_validator(mode="after")
+    def _check_names(self) -> WorkbookConfig:
+        problems: list[str] = []
+        seen: set[str] = set()
+        for name in self.header:
+            if name in seen:
+                problems.append(f"header lists {name!r} twice")
+            seen.add(name)
+        if not self.header:
+            problems.append("header is empty")
+        for logical in REQUIRED_LOGICAL_FIELDS:
+            if logical not in self.columns:
+                problems.append(f"columns is missing the logical field {logical!r}")
+        for logical, name in self.columns.items():
+            if name not in seen:
+                problems.append(f"columns.{logical} -> {name!r} is not in header")
+        for label, names in (
+            ("writable_columns", self.writable_columns),
+            ("provenance_columns", self.provenance_columns),
+            ("crm_columns", self.crm_columns),
+            ("formula_columns", self.formula_columns),
+            ("formula_precedents", self.formula_precedents),
+            ("required_sheets", []),
+        ):
+            for name in names:
+                if name not in seen:
+                    problems.append(f"{label} names {name!r}, which is not in header")
+        if self.sheet not in self.required_sheets:
+            problems.append(f"required_sheets must include the data sheet {self.sheet!r}")
+        if problems:
+            raise ValueError("workbook section: " + "; ".join(problems))
+        self.bind_header(self.header)
+        return self
+
+    # -- letters, derived ----------------------------------------------------
+    def bind_header(self, actual: list[str]) -> None:
+        """Derive column letters from a header row (the contract, or the sheet's)."""
+        self._letters = {
+            str(name): get_column_letter(index)
+            for index, name in enumerate(actual, start=1)
+            if name not in (None, "")
+        }
+
+    def letter_of(self, header_name: str) -> str:
+        try:
+            return self._letters[header_name]
+        except KeyError as exc:
+            raise ValueError(
+                f"column {header_name!r} is not in the bound header ({len(self._letters)} columns)"
+            ) from exc
+
+    def header_of(self, letter: str) -> str:
+        for name, col in self._letters.items():
+            if col == letter:
+                return name
+        return letter
 
     def column_for(self, logical_field: str) -> str:
-        return getattr(self.columns, logical_field)
+        """Worksheet letter of a logical field, resolved through the header."""
+        return self.letter_of(self.columns[logical_field])
+
+    def letters(self, names: list[str]) -> list[str]:
+        return [self.letter_of(n) for n in names]
+
+    @property
+    def writable_letters(self) -> list[str]:
+        return self.letters(self.writable_columns)
+
+    @property
+    def provenance_letters(self) -> list[str]:
+        return self.letters(self.provenance_columns)
+
+    @property
+    def crm_letters(self) -> list[str]:
+        return self.letters(self.crm_columns)
+
+    @property
+    def formula_letters(self) -> list[str]:
+        return self.letters(self.formula_columns)
+
+    @property
+    def precedent_letters(self) -> list[str]:
+        return self.letters(self.formula_precedents)
+
+    @property
+    def column_count(self) -> int:
+        return len(self.header)
 
     def is_empty(self, value: Any) -> bool:
         """True when a cell may be filled: it holds nothing meaningful yet."""
@@ -79,6 +201,7 @@ class WorkbookConfig(BaseModel):
 
 
 class SkipRule(BaseModel):
+    #: Header name of the column (e.g. "Contacted").
     column: str
     values: list[str]
 
@@ -190,8 +313,11 @@ class GdprConfig(BaseModel):
 class Config(BaseModel):
     """The whole of `config.yaml`, validated."""
 
-    workbook_path: str
-    output_dir: str
+    #: The Drive folder holding the versioned workbooks. Never a filename.
+    workbook_dir: str
+    #: Where the emitted workbook goes. Defaults to `workbook_dir`, so the next
+    #: run's resolver picks the new version up without any config change.
+    output_dir: str | None = None
     cache_dir: str
     state_dir: str = "./data/state"
     log_dir: str = "./data/logs"
@@ -225,12 +351,12 @@ class Config(BaseModel):
         return p if p.is_absolute() else (self.repo_root / p).resolve()
 
     @property
-    def workbook_file(self) -> Path:
-        return Path(self.workbook_path)
+    def workbook_directory(self) -> Path:
+        return self._resolve(self.workbook_dir)
 
     @property
     def output_directory(self) -> Path:
-        return Path(self.output_dir)
+        return self._resolve(self.output_dir) if self.output_dir else self.workbook_directory
 
     @property
     def cache_directory(self) -> Path:
@@ -267,8 +393,20 @@ class Config(BaseModel):
         overlap = set(wb.writable_columns) & set(wb.formula_columns)
         if overlap:
             problems.append(f"writable_columns overlaps formula_columns: {sorted(overlap)}")
-        if wb.column_for("contacted") not in wb.crm_columns:
+        overlap = set(wb.writable_columns) & set(wb.formula_precedents)
+        if overlap:
+            problems.append(f"writable_columns overlaps formula_precedents: {sorted(overlap)}")
+        overlap = set(wb.provenance_columns) & set(wb.formula_precedents)
+        if overlap:
+            problems.append(f"provenance_columns overlaps formula_precedents: {sorted(overlap)}")
+        if wb.columns["contacted"] not in wb.crm_columns:
             problems.append("the Contacted column must be listed in crm_columns")
+        for name in wb.formula_columns:
+            if name not in wb.crm_columns:
+                problems.append(f"formula column {name!r} must also be listed in crm_columns")
+        for rule in self.selection.skip_when:
+            if rule.column not in wb.header:
+                problems.append(f"selection.skip_when names column {rule.column!r}, not in header")
         try:
             if self.artifacts_directory == self.output_directory:
                 problems.append(
@@ -277,12 +415,10 @@ class Config(BaseModel):
                 )
         except (OSError, ValueError):  # pragma: no cover - unresolvable path
             pass
-        for logical in ("general_email", "sales_b2b_email", "phone", "whatsapp",
-                        "contact_person_name", "contact_person_role", "linkedin_url",
-                        "instagram_handle", "commission_terms"):
-            col = wb.column_for(logical)
-            if col not in wb.writable_columns:
-                problems.append(f"{logical} -> column {col} is not in writable_columns")
+        for logical in ENRICHABLE_LOGICAL_FIELDS:
+            name = wb.columns[logical]
+            if name not in wb.writable_columns:
+                problems.append(f"{logical} -> column {name!r} is not in writable_columns")
         return problems
 
 

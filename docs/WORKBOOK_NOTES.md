@@ -1,9 +1,13 @@
 # Workbook notes — measured, not assumed
 
 Everything here was read off
-`2026-08-21_EFE_Alpine_Partner_Database_v03.xlsx` on 2026-08-21. The writer depends
-on these facts, so `efe check` re-asserts the structural ones on every run and
-refuses to proceed if any has changed.
+`2026-08-21_EFE_Alpine_Partner_Database_v03.xlsx` on 2026-08-21; the counts below
+are that snapshot's (v05, 2026-08-24, holds 277 data rows and 10 sheets). The writer
+depends on the *structural* facts — the ordered header, the required sheets, a
+formula in `Next_Follow_Up` on every data row, the formula dependency graph — and
+`efe check` re-asserts those on every run (see README, "Which file is read"). Row
+and formula counts are not asserted against config any more; the row count is only
+compared with the previous run's, and going backwards is refused.
 
 ---
 
@@ -11,8 +15,8 @@ refuses to proceed if any has changed.
 
 | | |
 |---|---|
-| Sheets | `READ_ME, DASHBOARD, PARTNERS, RESORTS_SBI, PRICING_BENCH, REGULATORY, _SOURCES, _GAPS_ROUND2, CHANGELOG` |
-| PARTNERS | `A1:AM254` — 39 columns, 253 data rows |
+| Sheets | `READ_ME, DASHBOARD, PARTNERS, RESORTS_SBI, PRICING_BENCH, REGULATORY, _SOURCES, _GAPS_ROUND2, CHANGELOG` — plus `CHANGELOG_DETAIL` since v04 (required from v05 on) |
+| PARTNERS | `A1:AM254` — 39 columns, 253 data rows (v05: 277 rows, padded to ~1000 by Google Sheets; the padding is ignored) |
 | Autofilter | `A1:AM254` |
 | Freeze panes | `C2` |
 | Data validations | 5 — `T2:T254` (Y/N/Unknown), `Y2:Y254` (1–5), `Z2:Z254` (NO/YES), `AD2:AH254` (X), `AI2:AI254` (21 statuses) |
@@ -37,9 +41,11 @@ None of those five columns is writable by this tool. `PARTNERS!AC` depends on `A
 and `AB`, which are CRM columns and equally off-limits. So **no write this tool
 makes can change any formula's result anywhere in the workbook.**
 
-`writer.assert_no_precedents_touched` enforces that premise on every run. If someone
-later adds `C`, `G`, `Y`, `Z`, `AI`, `AA` or `AB` to `writable_columns` in
-`config.yaml`, the run stops rather than silently preserving a stale DASHBOARD total.
+`writer.assert_no_precedents_touched` enforces that premise on every run. Those
+seven columns are listed by name as `workbook.formula_precedents` in `config.yaml`
+(`Category, Country, Priority_Score, Contacted, Status, Contact_Date,
+Follow_Up_Days`); if someone later adds one of them to `writable_columns`, the run
+stops rather than silently preserving a stale DASHBOARD total.
 
 ## Cached formula results — the one thing openpyxl destroys
 

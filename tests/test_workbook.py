@@ -472,17 +472,29 @@ def test_gate_passes_a_clean_write(synthetic_config):
 # ---------------------------------------------------------------------------
 
 def test_next_version_increments(synthetic_config):
+    """The output version is the input's plus one -- never a folder scan."""
+    from efe.models import VersionConflictError
+
     directory = synthetic_config.output_directory
     base = synthetic_config.output_basename
-    (directory / f"2026-08-21_{base}_v03.xlsx").write_bytes(b"x")
-    (directory / f"2026-08-20_{base}_v07.xlsx").write_bytes(b"x")
-    assert next_version_path(synthetic_config, "2026-08-22").name == (
-        f"2026-08-22_{base}_v08.xlsx"
+    assert next_version_path(synthetic_config, 3, when="2026-08-22").name == (
+        f"2026-08-22_{base}_v04.xlsx"
     )
+    # A higher version anywhere in the workbook or output folder blocks the write:
+    # version numbers only go up, and the resolver would read that file next time.
+    (directory / f"2026-08-20_{base}_v07.xlsx").write_bytes(b"x")
+    with pytest.raises(VersionConflictError, match="v07 already exists"):
+        next_version_path(synthetic_config, 3, when="2026-08-22")
+    assert next_version_path(synthetic_config, 7, when="2026-08-22").name.endswith("_v08.xlsx")
 
 
-def test_first_version_when_the_directory_is_empty(synthetic_config):
-    assert next_version_path(synthetic_config, "2026-08-22").name.endswith("_v01.xlsx")
+def test_output_version_needs_a_versioned_input(synthetic_config):
+    """No vNN on the input means no way to derive the output: refuse, never guess v01."""
+    from efe.models import VersionConflictError
+
+    with pytest.raises(VersionConflictError, match="carries no vNN"):
+        next_version_path(synthetic_config, 0, when="2026-08-22")
+    assert next_version_path(synthetic_config, 1, when="2026-08-22").name.endswith("_v02.xlsx")
 
 
 def test_written_output_is_a_valid_xlsx(synthetic_config):
@@ -716,7 +728,15 @@ def test_trailing_empty_rows_do_not_fail_the_schema_check(synthetic_config,
 
 
 def test_a_genuinely_short_sheet_still_fails(synthetic_config, synthetic_workbook):
-    """Tolerating trailing blanks must not tolerate missing data."""
+    """Tolerating trailing blanks must not tolerate missing data.
+
+    There is no configured row count any more; the baseline is what the last run
+    recorded. Fewer rows than that is an old file or a half-finished sync.
+    """
+    from efe.models import ContinuityError
+
+    assert load_workbook_view(synthetic_config).data_rows == 8
+
     wb = load_workbook(synthetic_workbook)
     ws = wb["PARTNERS"]
     for column in range(1, ws.max_column + 1):
@@ -724,5 +744,7 @@ def test_a_genuinely_short_sheet_still_fails(synthetic_config, synthetic_workboo
     wb.save(synthetic_workbook)
     wb.close()
 
-    with pytest.raises(SchemaMismatchError, match="holds data to row"):
+    with pytest.raises(ContinuityError, match="fewer data rows than last run"):
         load_workbook_view(synthetic_config)
+    # Re-baselining is possible, but only when asked for explicitly.
+    assert load_workbook_view(synthetic_config, reset_state=True).data_rows == 7

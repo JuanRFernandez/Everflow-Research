@@ -39,8 +39,10 @@ bug, and none of it should be "fixed" again.**
 | Pads PARTNERS' used range out to 1000 rows on save — 746 of them empty | The schema check compares the **data extent** (the last row holding an ID or an entity name), not the raw row count. Trailing blanks are logged and ignored; only populated rows are loaded. | **Correct as is** |
 | Rewrites the whole file on open — size, mtime and internal parts all change | The write gate compares the emitted file against the input *as it was read at the start of the run*, and refuses to write rather than overwriting a file that moved underneath it. | **Correct as is** |
 
-A genuinely short sheet still fails the schema check, and a genuinely lossy write
-still fails the gate. The tolerances are narrow and deliberate.
+A sheet with fewer rows than the previous run recorded (`data/state/workbook.json`)
+is refused, and a genuinely lossy write still fails the gate. There is no absolute
+row floor: the first run, or a run after `--reset-state`, accepts whatever is there
+and makes it the baseline. The tolerances are narrow and deliberate.
 
 ### The one operational rule
 
@@ -101,7 +103,7 @@ uv run efe enrich --dry-run --rows 2:21
 # Write a new version of the workbook to the G: folder.
 uv run efe enrich
 
-# Check the workbook is readable and matches the expected schema; changes nothing.
+# Which file will be read, why, and whether it honours the contract. Changes nothing.
 uv run efe check
 
 # Report duplicate PARTNERS rows. Detection only — never merges.
@@ -116,8 +118,9 @@ uv run efe verify --against ".../..._v03.xlsx" ".../..._v04.xlsx"
 | `--dry-run` | Reports what *would* change. Writes no workbook. |
 | `--limit N` | Process at most N selected rows. |
 | `--rows A:B` | Restrict to worksheet rows A–B inclusive. |
-| `--workbook PATH` | Override `workbook_path` for one run. |
-| `--round NAME` | Round id, written to column AM. Default `R2-enrich`. |
+| `--workbook PATH` | Read this file instead of the highest version in `workbook_dir`. |
+| `--reset-state` | Accept the chosen file as the new baseline even if it has fewer rows or a lower version than the last run recorded (`check`, `enrich`, `duplicates`). |
+| `--round NAME` | Round id, written to `Round`. Default `R2-enrich`. |
 | `--categories 1,2,3` | Override `selection.categories` for one run; `all` clears the filter. |
 | `--resorts A,B` | Override `selection.resorts`; accent/umlaut-insensitive; `all` clears. |
 | `--no-cache` | Ignore the page cache and refetch. |
@@ -140,8 +143,8 @@ knowing about; the rest are vocabularies you extend as you meet new sites.
 
 | Key | What it controls |
 |---|---|
-| `workbook_path` | The input workbook. Override per-run with `--workbook`. |
-| `output_dir` | The Drive folder. Receives the versioned `.xlsx` **and nothing else**. |
+| `workbook_dir` | The Drive **folder**. Never a file: the highest version in it is read (below). Override per-run with `--workbook`. |
+| `output_dir` | Where the new version goes. Omitted = `workbook_dir`, so the next run picks it up. Receives the versioned `.xlsx` **and nothing else**. |
 | `artifacts_dir` | Everything else — run reports, decision table, CSVs, duplicates report. Local, gitignored. |
 | `cache_dir`, `state_dir`, `log_dir` | Machine state, all under gitignored `data/`. |
 
@@ -149,6 +152,36 @@ The two are deliberately separate. A run report and a review CSV are working
 output, not deliverables, and the CSVs carry contact data that has no business
 syncing to a shared Drive folder. `config.sanity_check()` refuses a config that
 sets them to the same directory, and every run prints both paths at the end.
+
+### Which file is read — invariants, not constants
+
+Nothing in `config.yaml` names a workbook version, a row count, a formula count
+or a column letter; a new version never needs a config edit.
+
+- **Resolution.** `workbook_dir` is scanned for
+  `<date>_EFE_Alpine_Partner_Database_vNN.xlsx` — date with or without dashes
+  (`2026-08-24_…` and `20260824_…` both count). Files marked `SUPERSEDED`, Excel
+  `~$` lock files and anything under `workbook.min_plausible_bytes` (a Drive
+  placeholder) are excluded. The highest `vNN` wins, newest mtime breaking a tie.
+  The choice and every rejection, with its reason, are logged on every run; zero
+  candidates is an error that lists the folder.
+- **Contract.** `workbook.header` is the 39 PARTNERS column names, exact and in
+  order — a workbook that differs is refused with a positional diff. Column
+  letters are derived from that header at run time (`writable_columns`,
+  `crm_columns`, `formula_columns`, `provenance_columns` are names, not letters).
+  `workbook.required_sheets` must all exist (extra sheets are fine).
+  `Next_Follow_Up` must hold a formula on **every** data row.
+- **Continuity.** After each successful load, `data/state/workbook.json` records
+  the file, its version, its data-row count and a header hash. The next load is
+  compared with it: fewer rows, a lower version or a changed header stops the run
+  ("old file or half-finished sync") — `--reset-state` makes the chosen file the
+  new baseline when that is deliberate.
+- **Symmetric output.** The writer emits `vNN+1` against the version it actually
+  read, refuses if that version already exists anywhere in the folder, never
+  writes in place, and the next run's resolver reads it without any change.
+
+`efe check` prints all of this: chosen file, rejections, sheets, header, rows,
+formula column, baseline. "Blocked" is never a mystery.
 
 ### How hard it crawls — raise these only with a reason
 
@@ -255,10 +288,11 @@ written — it goes to review, and you widen `email.sales_local_parts` or
 
 **To the Drive folder (`output_dir`) — the workbook, and only the workbook:**
 
-- `YYYY-MM-DD_EFE_Alpine_Partner_Database_vNN.xlsx` — a new version, never an
-  overwrite. A row is appended to `CHANGELOG`, and a new `CHANGELOG_DETAIL` sheet logs
-  every cell change *and* every held-back candidate with old value, new value, source
-  URL and confidence.
+- `YYYY-MM-DD_EFE_Alpine_Partner_Database_vNN.xlsx` — one above the version that
+  was read, never an overwrite. A row is appended to `CHANGELOG` after its last real
+  entry, and `CHANGELOG_DETAIL` (created on the first run, appended to ever after)
+  logs every cell change *and* every held-back candidate with old value, new value,
+  source URL and confidence.
 
 **To `artifacts_dir` (local, gitignored) — everything else:**
 
@@ -278,7 +312,7 @@ file went where.
 ### The fidelity gate
 
 openpyxl rewrites the whole workbook, so before an output is accepted it is compared
-against the input cell by cell: all 491 formulas at identical addresses, the 5 data
+against the input cell by cell: every formula at its identical address, the data
 validations, the autofilter, freeze panes, column widths, number formats, and every
 value outside the intended write set. openpyxl also discards every formula's cached
 result; those are reinjected from the input, which is sound because no column this

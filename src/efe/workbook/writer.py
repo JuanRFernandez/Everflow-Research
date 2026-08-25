@@ -2,8 +2,9 @@
 
 The input file is never modified. A copy is built in the repo's gitignored `data/`
 directory, verified cell by cell against the input, and only then copied to the
-Google Drive folder under a new version number. If verification fails, the candidate
-is deleted and the run reports what broke.
+Google Drive folder under a new version number -- one above the version of the file
+that was actually read, never a number from config. If verification fails, the
+candidate is deleted and the run reports what broke.
 
 Three rules are enforced here rather than trusted to callers:
 
@@ -25,8 +26,14 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import column_index_from_string
 
 from efe.config import Config
-from efe.models import CellChange, VerificationError, today_iso
-from efe.workbook.reader import WorkbookView, guard_readable, guard_writable
+from efe.models import CellChange, VerificationError, VersionConflictError, today_iso
+from efe.workbook.reader import (
+    WorkbookView,
+    file_fingerprint,
+    guard_readable,
+    guard_writable,
+)
+from efe.workbook.resolve import highest_version_present, parse_version
 from efe.workbook.verify import compare, format_report, snapshot
 from efe.workbook.xmlutil import reinject_cached_values
 
@@ -53,53 +60,72 @@ CHANGELOG_DETAIL_HEADERS = [
 # Output naming
 # ---------------------------------------------------------------------------
 
-def next_version_path(cfg: Config, when: str | None = None) -> Path:
-    """`YYYY-MM-DD_EFE_Alpine_Partner_Database_vNN.xlsx`, one above the highest vNN.
 
-    The whole directory is scanned rather than the input filename alone, so a version
-    emitted on an earlier date is still respected.
+def next_version_path(cfg: Config, input_version: int, when: str | None = None) -> Path:
+    """`YYYY-MM-DD_<basename>_v<input+1>.xlsx` in the output folder.
+
+    The version comes from the file that was actually read -- never from config,
+    never from a directory scan. If any file in the workbook or output folder
+    already carries that version or a higher one (superseded, tiny, whatever
+    state it is in), writing is refused: version numbers only ever go up, and the
+    resolver would read that higher file on the next run anyway.
     """
-    directory = cfg.output_directory
-    stamp = when or today_iso()
     basename = cfg.output_basename
+    if input_version < 1:
+        raise VersionConflictError(
+            "Cannot derive an output version: the input file name carries no vNN "
+            f"(expected <date>_{basename}_vNN.xlsx). Nothing has been written."
+        )
+    next_version = input_version + 1
+    assert_version_free(cfg, next_version)
+    stamp = when or today_iso()
+    return cfg.output_directory / f"{stamp}_{basename}_v{next_version:02d}.xlsx"
 
-    highest = 0
-    if directory.is_dir():
-        for entry in directory.glob(f"*{basename}_v*.xlsx"):
-            tail = entry.stem.rsplit("_v", 1)[-1]
-            if tail.isdigit():
-                highest = max(highest, int(tail))
-    return directory / f"{stamp}_{basename}_v{highest + 1:02d}.xlsx"
+
+def assert_version_free(cfg: Config, version: int) -> None:
+    """Refuse `version` if any file in the workbook/output folders already carries
+    it or a higher one. Called when the output name is derived AND again right
+    before the copy: a same-version file that lands mid-run must not be shadowed."""
+    highest, where = highest_version_present(
+        [cfg.workbook_directory, cfg.output_directory], cfg.output_basename
+    )
+    if where is not None and highest >= version:
+        raise VersionConflictError(
+            f"Refusing to emit v{version:02d}: v{highest:02d} already exists "
+            f"({where}). Version numbers only ever go up; the resolver reads the "
+            "highest version on the next run. Nothing has been written."
+        )
 
 
 # ---------------------------------------------------------------------------
 # Guards on the change set
 # ---------------------------------------------------------------------------
 
+
 def assert_changes_legal(changes: list[CellChange], cfg: Config, view: WorkbookView) -> None:
     """Refuse a change set that would break any of the three standing rules."""
     spec = cfg.workbook
-    writable = set(spec.writable_columns) | set(spec.provenance_columns)
-    forbidden = set(spec.crm_columns) | set(spec.formula_columns)
+    writable_only = set(spec.writable_letters)
+    writable = writable_only | set(spec.provenance_letters)
+    forbidden = set(spec.crm_letters) | set(spec.formula_letters)
     by_row = {pr.row: pr for pr in view.rows}
     problems: list[str] = []
 
     seen: set[tuple[int, str]] = set()
     for change in changes:
         target = (change.row, change.column)
+        label = f"{change.column}{change.row} ({spec.header_of(change.column)})"
         if change.column in forbidden:
             problems.append(
-                f"{change.column}{change.row} is a human-owned CRM or formula column "
+                f"{label} is a human-owned CRM or formula column "
                 f"({change.field}) - refusing to write"
             )
             continue
         if change.column not in writable:
-            problems.append(
-                f"{change.column}{change.row} is not in writable_columns ({change.field})"
-            )
+            problems.append(f"{label} is not in writable_columns ({change.field})")
             continue
         if target in seen:
-            problems.append(f"{change.column}{change.row} written twice in one run")
+            problems.append(f"{label} written twice in one run")
             continue
         seen.add(target)
 
@@ -108,47 +134,43 @@ def assert_changes_legal(changes: list[CellChange], cfg: Config, view: WorkbookV
             problems.append(f"row {change.row} is not a PARTNERS data row")
             continue
         current = row.get(change.column)
-        if change.column in spec.writable_columns and not spec.is_empty(current):
+        if change.column in writable_only and not spec.is_empty(current):
             problems.append(
-                f"{change.column}{change.row} already holds {current!r} "
-                "- refusing to overwrite a non-TBD value"
+                f"{label} already holds {current!r} - refusing to overwrite a non-TBD value"
             )
         if not change.source_url or not change.source_url.startswith(("http://", "https://")):
             problems.append(
-                f"{change.column}{change.row} has no usable source URL "
+                f"{label} has no usable source URL "
                 f"({change.source_url!r}) - refusing to write a value without provenance"
+            )
+        if str(change.new_value).lstrip().startswith("="):
+            problems.append(
+                f"{label} value {change.new_value!r} starts with '=' and would be stored "
+                "as a live formula, not text - refusing"
             )
 
     if problems:
         joined = "\n  - ".join(problems)
-        raise VerificationError(
-            "The change set is illegal and was NOT written:\n  - " + joined
-        )
+        raise VerificationError("The change set is illegal and was NOT written:\n  - " + joined)
 
 
 def assert_no_precedents_touched(changes: list[CellChange], cfg: Config) -> None:
     """Confirm no written cell feeds any formula in the workbook.
 
-    This is the premise that makes cached-value reinjection sound. In this workbook
-    the only cross-sheet dependency is DASHBOARD -> PARTNERS!{C,G,Y,Z,AI}, and
-    PARTNERS!AC depends on AA and AB. If a future config makes one of those columns
-    writable, reinjection would preserve a stale result, so the run stops instead.
+    This is the premise that makes cached-value reinjection sound. The columns that
+    feed formulas (DASHBOARD -> PARTNERS!{Category, Country, Priority_Score,
+    Contacted, Status}; Next_Follow_Up -> Contact_Date + Follow_Up_Days) are listed
+    as `workbook.formula_precedents`. If a future config makes one of them writable,
+    reinjection would preserve a stale result, so the run stops instead.
     """
     spec = cfg.workbook
-    precedents = {
-        spec.column_for("category"),        # C  -> DASHBOARD COUNTIF
-        spec.column_for("country"),         # G  -> DASHBOARD COUNTIF
-        spec.column_for("priority_score"),  # Y  -> DASHBOARD COUNTIFS
-        spec.column_for("contacted"),       # Z  -> DASHBOARD COUNTIFS
-        spec.column_for("status"),          # AI -> DASHBOARD COUNTIF
-        "AA",                               # -> PARTNERS!AC
-        "AB",                               # -> PARTNERS!AC
-    }
+    precedents = set(spec.precedent_letters)
     offending = sorted({c.column for c in changes} & precedents)
     if offending:
+        names = [spec.header_of(letter) for letter in offending]
         raise VerificationError(
-            f"Columns {offending} feed live formulas. Writing them would invalidate the "
-            "cached results this writer preserves. Nothing has been written."
+            f"Columns {names} ({offending}) feed live formulas. Writing them would "
+            "invalidate the cached results this writer preserves. Nothing has been written."
         )
 
 
@@ -156,15 +178,17 @@ def assert_no_precedents_touched(changes: list[CellChange], cfg: Config) -> None
 # Provenance
 # ---------------------------------------------------------------------------
 
+
 def build_provenance_changes(
     changes: list[CellChange], cfg: Config, view: WorkbookView, run_date: str
 ) -> list[CellChange]:
-    """AK/AL/AM updates for rows that actually changed. Untouched rows stay untouched.
+    """Source_URL/Date_Verified/Round updates for rows that actually changed.
 
-    `Date_Verified` is taken from the evidence, not from the clock: it is the date the
-    page carrying the value was actually fetched. A long run that crosses midnight,
-    or one replayed from cache days later, would otherwise stamp rows with a date on
-    which nothing was verified. `run_date` is only the fallback.
+    Untouched rows stay untouched. `Date_Verified` is taken from the evidence, not
+    from the clock: it is the date the page carrying the value was actually fetched.
+    A long run that crosses midnight, or one replayed from cache days later, would
+    otherwise stamp rows with a date on which nothing was verified. `run_date` is
+    only the fallback.
     """
     spec = cfg.workbook
     ak = spec.column_for("source_url")
@@ -224,9 +248,23 @@ def build_provenance_changes(
 # The write
 # ---------------------------------------------------------------------------
 
+
+def _last_populated_row(ws, width: int) -> int:
+    """Last row holding anything in the first `width` columns.
+
+    `ws.max_row` is the used range: Google Sheets pads every sheet it exports to
+    1000 rows, so appending at `max_row + 1` would leave hundreds of blank lines
+    between the last entry and the new one.
+    """
+    for row in range(ws.max_row, 0, -1):
+        if any(ws.cell(row, c).value not in (None, "") for c in range(1, width + 1)):
+            return row
+    return 0
+
+
 def _append_changelog(ws, version_label: str, run_date: str, message: str) -> list[str]:
-    """Append one version-history row; return the coordinates written."""
-    row = ws.max_row + 1
+    """Append one version-history row after the last real entry; return coordinates."""
+    row = _last_populated_row(ws, 4) + 1
     written = []
     for offset, value in enumerate((version_label, run_date, message, "efe enrich (Phase 0)")):
         cell = ws.cell(row, 1 + offset)
@@ -236,22 +274,40 @@ def _append_changelog(ws, version_label: str, run_date: str, message: str) -> li
     return written
 
 
-def _write_changelog_detail(wb, sheet_name: str, records: list[CellChange],
-                            run_id: str) -> list[str]:
-    """Create the audit sheet: one row per cell change and per held-back candidate."""
-    ws = wb.create_sheet(sheet_name)
+def _write_changelog_detail(
+    wb, sheet_name: str, records: list[CellChange], run_id: str
+) -> tuple[list[str], bool]:
+    """Audit rows: one per cell change and per held-back candidate.
+
+    Creates the sheet on the first run; on later runs the sheet already exists
+    (the previous output kept it) and the rows are appended after the last real
+    entry, header and layout untouched. Returns (coordinates written, created).
+    """
+    created = sheet_name not in wb.sheetnames
     written: list[str] = []
+    if created:
+        ws = wb.create_sheet(sheet_name)
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill("solid", fgColor="1F3864")
+        for index, title in enumerate(CHANGELOG_DETAIL_HEADERS, start=1):
+            cell = ws.cell(1, index)
+            cell.value = title
+            cell.font = header_font
+            cell.fill = header_fill
+            written.append(cell.coordinate)
+        start = 2
+    else:
+        ws = wb[sheet_name]
+        found = [ws.cell(1, i).value for i in range(1, len(CHANGELOG_DETAIL_HEADERS) + 1)]
+        if found != CHANGELOG_DETAIL_HEADERS:
+            raise VerificationError(
+                f"{sheet_name} exists but its header is not the audit layout this "
+                f"writer produces:\n  expected {CHANGELOG_DETAIL_HEADERS}\n  found    {found}\n"
+                "Refusing to append misaligned rows. Nothing has been written."
+            )
+        start = _last_populated_row(ws, len(CHANGELOG_DETAIL_HEADERS)) + 1
 
-    header_font = Font(bold=True, color="FFFFFF")
-    header_fill = PatternFill("solid", fgColor="1F3864")
-    for index, title in enumerate(CHANGELOG_DETAIL_HEADERS, start=1):
-        cell = ws.cell(1, index)
-        cell.value = title
-        cell.font = header_font
-        cell.fill = header_fill
-        written.append(cell.coordinate)
-
-    for offset, change in enumerate(records, start=2):
+    for offset, change in enumerate(records, start=start):
         values = [
             datetime.now().isoformat(timespec="seconds"),
             run_id,
@@ -272,15 +328,23 @@ def _write_changelog_detail(wb, sheet_name: str, records: list[CellChange],
         for index, value in enumerate(values, start=1):
             cell = ws.cell(offset, index)
             cell.value = value
+            if isinstance(value, str) and value.startswith("="):
+                cell.data_type = "s"  # audit text, never a formula
             written.append(cell.coordinate)
 
-    widths = {"A": 20, "B": 14, "C": 6, "D": 11, "E": 34, "F": 7, "G": 22,
-              "H": 16, "I": 34, "J": 11, "K": 15, "L": 46, "M": 20, "N": 20, "O": 52}
-    for letter, width in widths.items():
-        ws.column_dimensions[letter].width = width
-    ws.freeze_panes = "C2"
-    ws.auto_filter.ref = f"A1:O{max(1, len(records) + 1)}"
-    return written
+    if created:
+        widths = {
+            "A": 20, "B": 14, "C": 6, "D": 11, "E": 34, "F": 7, "G": 22, "H": 16,
+            "I": 34, "J": 11, "K": 15, "L": 46, "M": 20, "N": 20, "O": 52,
+        }  # fmt: skip
+        for letter, width in widths.items():
+            ws.column_dimensions[letter].width = width
+        ws.freeze_panes = "C2"
+        ws.auto_filter.ref = f"A1:O{max(1, len(records) + 1)}"
+    elif ws.auto_filter.ref and records:
+        # Keep the audit filter covering the rows just appended.
+        ws.auto_filter.ref = f"A1:O{start + len(records) - 1}"
+    return written, created
 
 
 def write_enriched(
@@ -296,14 +360,30 @@ def write_enriched(
 ) -> Path:
     """Emit a verified, enriched copy of the workbook. Returns the written path.
 
+    The output version is the input's plus one (`view.version`), unless an explicit
+    `output_path` is given.
+
     Raises:
         VerificationError: the candidate failed the fidelity gate and was discarded.
+        VersionConflictError: the next version already exists somewhere.
         WorkbookLockedError / DriveSyncError: the environment is not safe to write.
     """
     source = view.path
     guard_readable(source, cfg.workbook.min_plausible_bytes)
+    if view.fingerprint and file_fingerprint(source) != view.fingerprint:
+        raise VerificationError(
+            "The input workbook changed since it was read:"
+            + chr(10)
+            + f"  {source}"
+            + chr(10)
+            + "A Drive sync or a new download landed mid-run. The changes computed from "
+            "the old content would be applied to rows this run never looked at. "
+            "Re-run from the current file. Nothing has been written."
+        )
 
-    destination = output_path or next_version_path(cfg)
+    destination = output_path or next_version_path(cfg, view.version)
+    target_version = parse_version(destination, cfg.output_basename) or view.version + 1
+    assert_version_free(cfg, target_version)
     guard_writable(destination)
 
     run_date = today_iso()
@@ -315,7 +395,7 @@ def write_enriched(
 
     staging_dir = workdir or (cfg.state_directory / "staging")
     staging_dir.mkdir(parents=True, exist_ok=True)
-    candidate = staging_dir / destination.name
+    candidate = staging_dir / f"{run_id}_{destination.name}"
 
     if candidate.exists():
         candidate.unlink()
@@ -323,7 +403,9 @@ def write_enriched(
 
     allowed: set[tuple[str, str]] = set()
     sheet_name = cfg.workbook.sheet
+    detail_sheet = cfg.workbook.changelog_detail_sheet
     version_label = destination.stem.rsplit("_", 1)[-1]
+    detail_created = False
 
     try:
         wb = load_workbook(candidate, data_only=False)
@@ -340,7 +422,7 @@ def write_enriched(
                 f"Contact enrichment (efe enrich, run {run_id}). "
                 f"{filled} cells filled across {rows_touched} rows from published "
                 f"company pages; every value carries a source URL and fetch date in "
-                f"{cfg.workbook.changelog_detail_sheet}. "
+                f"{detail_sheet}. "
                 f"{len(held_back or [])} candidates held for review, not written. "
                 "No CRM column, pre-existing value or formula was modified."
             )
@@ -353,10 +435,11 @@ def write_enriched(
                 (changes + provenance + list(held_back or [])),
                 key=lambda c: (c.row, c.column, c.field),
             )
-            for coordinate in _write_changelog_detail(
-                wb, cfg.workbook.changelog_detail_sheet, detail_records, run_id
-            ):
-                allowed.add((cfg.workbook.changelog_detail_sheet, coordinate))
+            coordinates, detail_created = _write_changelog_detail(
+                wb, detail_sheet, detail_records, run_id
+            )
+            for coordinate in coordinates:
+                allowed.add((detail_sheet, coordinate))
 
             wb.save(candidate)
         finally:
@@ -368,7 +451,8 @@ def write_enriched(
             snapshot(source),
             snapshot(candidate),
             allowed_value_changes=allowed,
-            allowed_new_sheets={cfg.workbook.changelog_detail_sheet},
+            allowed_new_sheets={detail_sheet} if detail_created else set(),
+            allowed_autofilter_changes={detail_sheet},
             require_cached_values=True,
         )
         if problems:
@@ -382,6 +466,7 @@ def write_enriched(
                 f"{view.formula_count} formulas. The candidate output was DELETED."
             )
 
+        assert_version_free(cfg, target_version)
         guard_writable(destination)
         shutil.copy2(candidate, destination)
         return destination

@@ -33,9 +33,9 @@ from efe.workbook.xmlutil import read_cached_values
 #: of three 299-byte ones.
 BENIGN_DROPPED_PARTS = re.compile(
     r"^(xl/worksheets/_rels/sheet\d+\.xml\.rels"
-    r"|xl/sharedStrings\.xml"          # openpyxl emits inline strings instead
-    r"|docProps/custom\.xml"           # empty <Properties/>
-    r"|docProps/app\.xml"              # application name and version only
+    r"|xl/sharedStrings\.xml"  # openpyxl emits inline strings instead
+    r"|docProps/custom\.xml"  # empty <Properties/>
+    r"|docProps/app\.xml"  # application name and version only
     # Google Sheets' private round-trip blob: locale, timezone and default font.
     # Not the OOXML cell-metadata part (which would be `xl/metadata.xml` and is
     # referenced from sheet cells); this one is inert and Excel ignores it.
@@ -44,7 +44,6 @@ BENIGN_DROPPED_PARTS = re.compile(
 
 _DRAWING_PART_RE = re.compile(r"^xl/drawings/drawing\d+\.xml$")
 _ANCHOR_RE = re.compile(r"<xdr:(?:twoCellAnchor|oneCellAnchor|absoluteAnchor)")
-
 
 
 @dataclass
@@ -106,16 +105,12 @@ def snapshot(path: Path) -> FidelitySnapshot:
     return snap
 
 
-def _diff_mapping(
-    label: str, a: dict, b: dict, limit: int = 8, ignore=None
-) -> list[str]:
+def _diff_mapping(label: str, a: dict, b: dict, limit: int = 8, ignore=None) -> list[str]:
     keep = (lambda k: True) if ignore is None else (lambda k: not ignore(k))
     problems: list[str] = []
     missing = sorted(filter(keep, set(a) - set(b)), key=repr)
     added = sorted(filter(keep, set(b) - set(a)), key=repr)
-    changed = sorted(
-        (k for k in set(a) & set(b) if a[k] != b[k] and keep(k)), key=repr
-    )
+    changed = sorted((k for k in set(a) & set(b) if a[k] != b[k] and keep(k)), key=repr)
     if missing:
         problems.append(f"{label}: {len(missing)} lost, e.g. {missing[:limit]}")
     if added:
@@ -132,6 +127,7 @@ def compare(
     *,
     allowed_value_changes: set[tuple[str, str]] | None = None,
     allowed_new_sheets: set[str] | None = None,
+    allowed_autofilter_changes: set[str] | None = None,
     require_cached_values: bool = True,
 ) -> list[str]:
     """Return a list of fidelity problems. An empty list means the output is safe.
@@ -144,6 +140,8 @@ def compare(
         allowed_new_sheets: sheets the writer legitimately adds -- in practice just
             CHANGELOG_DETAIL. Everything on them is exempt; every pre-existing sheet
             is still compared in full.
+        allowed_autofilter_changes: sheets whose autofilter range may differ -- the
+            audit sheet grows its filter to cover appended rows.
         require_cached_values: assert every formula still carries its cached result.
     """
     allowed = allowed_value_changes or set()
@@ -157,9 +155,7 @@ def compare(
         return key in new_sheets
 
     if before.sheets != after.sheets[: len(before.sheets)]:
-        problems.append(
-            f"sheet order/name changed: {before.sheets} -> {after.sheets}"
-        )
+        problems.append(f"sheet order/name changed: {before.sheets} -> {after.sheets}")
 
     problems += _diff_mapping("formula", before.formulas, after.formulas, ignore=exempt)
     problems += _diff_mapping(
@@ -168,7 +164,13 @@ def compare(
     problems += _diff_mapping(
         "data validation", before.data_validations, after.data_validations, ignore=exempt
     )
-    problems += _diff_mapping("autofilter", before.autofilter, after.autofilter, ignore=exempt)
+    filter_ok = allowed_autofilter_changes or set()
+    problems += _diff_mapping(
+        "autofilter",
+        before.autofilter,
+        after.autofilter,
+        ignore=lambda k: exempt(k) or k in filter_ok,
+    )
     problems += _diff_mapping(
         "freeze panes", before.freeze_panes, after.freeze_panes, ignore=exempt
     )
@@ -177,9 +179,7 @@ def compare(
     )
 
     if before.defined_names != after.defined_names:
-        problems.append(
-            f"defined names changed: {before.defined_names} -> {after.defined_names}"
-        )
+        problems.append(f"defined names changed: {before.defined_names} -> {after.defined_names}")
 
     # Values: every difference must have been intended.
     unexpected_changed, unexpected_lost = [], []
@@ -189,9 +189,7 @@ def compare(
             continue
         (unexpected_lost if new is None else unexpected_changed).append(key)
     if unexpected_lost:
-        problems.append(
-            f"{len(unexpected_lost)} cell values were lost, e.g. {unexpected_lost[:8]}"
-        )
+        problems.append(f"{len(unexpected_lost)} cell values were lost, e.g. {unexpected_lost[:8]}")
     if unexpected_changed:
         detail = [
             f"{k} {before.values.get(k)!r} -> {after.values.get(k)!r}"
@@ -202,8 +200,11 @@ def compare(
         )
 
     if require_cached_values:
-        lost = [k for k, v in before.cached_values.items() if v is not None
-                and after.cached_values.get(k) is None]
+        lost = [
+            k
+            for k, v in before.cached_values.items()
+            if v is not None and after.cached_values.get(k) is None
+        ]
         wrong = [
             (k, v, after.cached_values.get(k))
             for k, v in before.cached_values.items()

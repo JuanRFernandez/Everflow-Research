@@ -259,8 +259,9 @@ handled. **Neither is a defect. Do not re-diagnose or re-fix them.**
 
 - **Sheets pads PARTNERS' used range to 1000 rows on save**, 746 of them empty. The
   schema check compares the *data* extent — the last row holding an ID or an entity
-  name — logs the trailing blanks, and loads only populated rows. A genuinely short
-  sheet still fails.
+  name — logs the trailing blanks, and loads only populated rows. The schema check
+  itself has no row count; fewer rows than the last run recorded in
+  `data/state/workbook.json` is refused (`--reset-state` to re-baseline).
 - **Sheets rewrites the whole file on open**, changing its size, mtime and internal
   parts. The write gate compares the output against the input as read at the start of
   the run and refuses rather than overwriting. That is the gate working, not breaking.
@@ -281,4 +282,6 @@ on `G:` for the tool to open. It must stay a real `.xlsx`.
 
 Also worth knowing: **v03 was archived** to
 `99_ARCHIVE/2026-08-21_EFE_Alpine_Partner_Database_v03_SUPERSEDED.xlsx`, so
-`config.yaml`'s `workbook_path` now points at v04.
+`config.yaml` no longer names a version: `workbook_dir` is scanned and the highest
+`vNN` is read (see README, "Which file is read"), so v04 — and every version after
+it — is picked up without an edit.

@@ -296,6 +296,14 @@ class VerificationError(WorkbookGuardError):
     """The written output failed the fidelity gate. The output is discarded."""
 
 
+class ContinuityError(WorkbookGuardError):
+    """The chosen workbook goes backwards relative to what the last run recorded."""
+
+
+class VersionConflictError(WorkbookGuardError):
+    """The output version the writer would emit already exists, or cannot be derived."""
+
+
 def today_iso() -> str:
     """Date stamp in the workbook's own text format."""
     return date.today().isoformat()
