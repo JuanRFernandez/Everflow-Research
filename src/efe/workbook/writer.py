@@ -16,6 +16,7 @@ Three rules are enforced here rather than trusted to callers:
 
 from __future__ import annotations
 
+import logging
 import shutil
 from collections import defaultdict
 from datetime import datetime
@@ -35,7 +36,9 @@ from efe.workbook.reader import (
 )
 from efe.workbook.resolve import highest_version_present, parse_version
 from efe.workbook.verify import compare, format_report, snapshot
-from efe.workbook.xmlutil import reinject_cached_values
+from efe.workbook.xmlutil import read_cached_values, reinject_cached_values
+
+log = logging.getLogger(__name__)
 
 CHANGELOG_DETAIL_HEADERS = [
     "Timestamp",
@@ -462,10 +465,20 @@ def write_enriched(
                 format_report(problems)
                 + f"\n\nThe candidate output was DELETED. {source.name} is untouched."
             )
-        if repaired == 0 and view.formula_count:
+        # The tripwire is the SOURCE's cached results, not its formula count: a file
+        # last written by openpyxl carries none, and then there is nothing to lose.
+        source_cached = sum(1 for v in read_cached_values(source).values() if v is not None)
+        if repaired == 0 and source_cached:
             raise VerificationError(
-                "No cached formula results were reinjected although the workbook has "
-                f"{view.formula_count} formulas. The candidate output was DELETED."
+                "No cached formula results were reinjected although the input carries "
+                f"{source_cached}. The candidate output was DELETED."
+            )
+        if not source_cached:
+            log.warning(
+                "%s carries no cached formula results (last written by %s); the output "
+                "carries none either. Sheets and Excel recompute them on open.",
+                source.name,
+                view.last_writer or "unknown",
             )
 
         assert_version_free(cfg, target_version)

@@ -54,6 +54,7 @@ from efe.workbook.state import (
     save_state,
     state_path,
 )
+from efe.workbook.xmlutil import read_cached_values
 
 log = logging.getLogger(__name__)
 
@@ -168,6 +169,21 @@ def guard_writable(path: Path) -> None:
 
 class WorkbookGuardOutputExists(VersionConflictError):
     """The versioned output filename is already taken."""
+
+
+def last_writer_of(path: Path) -> str:
+    """The application that last saved the file, from docProps/app.xml ("" if unknown)."""
+    import re
+
+    try:
+        with zipfile.ZipFile(path) as zf:
+            if "docProps/app.xml" not in zf.namelist():
+                return ""
+            xml = zf.read("docProps/app.xml").decode("utf-8", "replace")
+    except (OSError, zipfile.BadZipFile):
+        return ""
+    match = re.search("<Application>(.*?)</Application>", xml)
+    return match.group(1).strip() if match else ""
 
 
 def file_fingerprint(path: Path) -> str:
@@ -410,6 +426,12 @@ class WorkbookView:
     previous_state: WorkbookState | None = None
     #: SHA-256 of the file as read; the writer refuses to work from a changed file.
     fingerprint: str = ""
+    #: Formula cells in the file, and how many carry a cached result. A file last
+    #: written by openpyxl carries none; Sheets and Excel recompute on open.
+    formula_cells: int = 0
+    cached_results: int = 0
+    #: docProps/app.xml Application, e.g. 'Microsoft Excel' or 'Openpyxl 3.1.5'.
+    last_writer: str = ""
 
     @property
     def data_rows(self) -> int:
@@ -553,6 +575,7 @@ def load_workbook_view(
     target = chosen.path
     spec = cfg.workbook
 
+    cached = read_cached_values(target)
     wb = load_workbook(target, data_only=False)
     try:
         report = assert_schema(wb, cfg, target.name)
@@ -629,6 +652,9 @@ def load_workbook_view(
             schema=report,
             previous_state=previous,
             fingerprint=file_fingerprint(target),
+            formula_cells=len(cached),
+            cached_results=sum(1 for v in cached.values() if v is not None),
+            last_writer=last_writer_of(target),
         )
     finally:
         wb.close()

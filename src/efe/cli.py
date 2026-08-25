@@ -206,6 +206,17 @@ def print_contract_report(cfg, view: WorkbookView, *, reset_state: bool = False)
             f"formula on all {view.data_rows} data rows"
         )
 
+    if view.formula_cells and view.cached_results:
+        console.print(
+            f"  cache     {view.cached_results} of {view.formula_cells} formula cells carry "
+            f"a cached result  [dim](last written by {view.last_writer or 'unknown'})[/dim]"
+        )
+    elif view.formula_cells:
+        console.print(
+            f"  cache     [yellow]none[/yellow] of {view.formula_cells} formula cells carry a "
+            f"cached result (last written by {view.last_writer or 'unknown'}). Sheets and "
+            "Excel recompute on open; the output will carry none either."
+        )
     console.print("[bold]Continuity[/bold]")
     prev = view.previous_state
     if prev is None:

@@ -582,3 +582,30 @@ def test_dry_run_keeps_its_own_resume_ledger(synthetic_config, capsys, monkeypat
     assert "27 of 27 rows skipped" in text and "--fresh" in text
     assert report_resumed(27, 27, real, "R3-hotels") == 0
     assert capsys.readouterr().out.strip() == ""
+
+
+def test_input_without_cached_results_is_written_not_refused(synthetic_config, synthetic_workbook):
+    """A file last saved by openpyxl carries no cached formula results. Nothing can be
+    reinjected, nothing is lost, and the tripwire must not fire."""
+    from tests.test_workbook import change
+
+    stripped = synthetic_config.workbook_directory / f"2026-08-22_{BASE}_v03.xlsx"
+    wb = load_workbook(synthetic_workbook)
+    wb.save(stripped)  # openpyxl drops every cached <v>
+    wb.close()
+
+    view = load_workbook_view(synthetic_config)
+    assert view.path == stripped and view.version == 3
+    assert view.formula_cells == 11 and view.cached_results == 0
+    assert "penpyxl" in view.last_writer
+    out = write_enriched(
+        synthetic_config,
+        view,
+        [change(2, "P", "instagram_handle", "@summitlodgeverbier")],
+        run_id="test-nocache",
+    )
+    assert out.name.endswith("_v04.xlsx")
+
+    # ... while an input WITH cached results still trips the wire if none come back.
+    cached_view = load_workbook_view(synthetic_config, synthetic_workbook, reset_state=True)
+    assert cached_view.cached_results == 11
