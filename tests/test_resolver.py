@@ -202,7 +202,10 @@ def test_formula_column_must_hold_a_formula_on_every_row(synthetic_config, synth
 
 
 def test_letters_are_derived_from_the_header_not_config(synthetic_config):
+    view = load_workbook_view(synthetic_config)  # binds letters from the sheet's header
     spec = synthetic_config.workbook
+    for logical, name in spec.columns.items():
+        assert spec.column_for(logical) == view.header_letters[name]
     assert spec.column_for("id") == "A"
     assert spec.column_for("general_email") == "I"
     assert spec.column_for("round") == "AM"

@@ -910,7 +910,7 @@ def main() -> int:
     # Windows consoles default to cp1252; hotel names carry umlauts.
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     cfg = config.load()
-    view = load_workbook_view(cfg)
+    view = load_workbook_view(cfg, record_state=False, command="discover_hotels")
     spec = cfg.workbook
     import openpyxl
 

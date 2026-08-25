@@ -290,7 +290,8 @@ written — it goes to review, and you widen `email.sales_local_parts` or
 
 - `YYYY-MM-DD_EFE_Alpine_Partner_Database_vNN.xlsx` — one above the version that
   was read, never an overwrite. A row is appended to `CHANGELOG` after its last real
-  entry, and `CHANGELOG_DETAIL` (created on the first run, appended to ever after)
+  entry, and `CHANGELOG_DETAIL` (a required sheet with the 15-column audit layout; rows are
+  appended after its last real entry)
   logs every cell change *and* every held-back candidate with old value, new value,
   source URL and confidence.
 

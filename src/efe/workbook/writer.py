@@ -66,9 +66,10 @@ def next_version_path(cfg: Config, input_version: int, when: str | None = None) 
 
     The version comes from the file that was actually read -- never from config,
     never from a directory scan. If any file in the workbook or output folder
-    already carries that version or a higher one (superseded, tiny, whatever
-    state it is in), writing is refused: version numbers only ever go up, and the
-    resolver would read that higher file on the next run anyway.
+    already carries that version or a higher one -- a tiny placeholder counts; a
+    copy retired as `_SUPERSEDED` does not, it released its number -- writing is
+    refused: version numbers only ever go up, and the resolver would read that
+    higher file on the next run anyway.
     """
     basename = cfg.output_basename
     if input_version < 1:
@@ -279,9 +280,10 @@ def _write_changelog_detail(
 ) -> tuple[list[str], bool]:
     """Audit rows: one per cell change and per held-back candidate.
 
-    Creates the sheet on the first run; on later runs the sheet already exists
-    (the previous output kept it) and the rows are appended after the last real
-    entry, header and layout untouched. Returns (coordinates written, created).
+    CHANGELOG_DETAIL is a required sheet, so rows are appended after its last real
+    entry with header and layout untouched. Creating it is kept for a workbook that
+    predates the audit sheet, should the requirement ever be relaxed. Returns
+    (coordinates written, created).
     """
     created = sheet_name not in wb.sheetnames
     written: list[str] = []
