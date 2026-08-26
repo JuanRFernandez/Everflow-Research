@@ -43,6 +43,11 @@ BENIGN_DROPPED_PARTS = re.compile(
 )
 
 _DRAWING_PART_RE = re.compile(r"^xl/drawings/drawing\d+\.xml$")
+#: The threaded-comment author list a Google Sheets export always carries.
+#: Judged by content, like drawings: without threaded comments it names nobody
+#: the workbook needs; with them, dropping it would orphan the comments.
+_PERSONS_PART_RE = re.compile(r"^xl/persons/person\d*\.xml$")
+_THREADED_COMMENTS_PREFIX = "xl/threadedComments/"
 _ANCHOR_RE = re.compile(r"<xdr:(?:twoCellAnchor|oneCellAnchor|absoluteAnchor)")
 
 
@@ -221,6 +226,14 @@ def compare(
     dropped = set()
     for part in before.parts - after.parts:
         if BENIGN_DROPPED_PARTS.match(part):
+            continue
+        if _PERSONS_PART_RE.match(part):
+            if not any(p.startswith(_THREADED_COMMENTS_PREFIX) for p in before.parts):
+                continue
+            problems.append(
+                f"{part} (threaded-comment authors) was dropped while the workbook "
+                "holds threaded comments -- they would lose their authors"
+            )
             continue
         if _DRAWING_PART_RE.match(part):
             # Safe only when the drawing held nothing.

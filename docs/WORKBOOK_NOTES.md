@@ -103,7 +103,9 @@ the file*, which is worth knowing when reading the fidelity claims below.
 an `xl/metadata` part with no `.xml` extension appears carrying a Google blob
 (`en_US`, `America/Los_Angeles`, a default font), every sheet gains its own `_rels`,
 and the three empty drawing stubs become nine. A later save also padded the used range
-out to 1000 rows.
+out to 1000 rows. A genuine Sheets *export* (v07, 2026-08-26) also carries
+`xl/persons/person.xml`, the threaded-comment author list; openpyxl drops it, and
+the gate accepts that only while the workbook holds no `xl/threadedComments/` part.
 
 **What was verified afterwards, before trusting the file again:**
 

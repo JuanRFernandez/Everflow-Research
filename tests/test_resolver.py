@@ -680,3 +680,18 @@ def test_blank_formula_cell_on_a_human_verified_row_is_still_a_gap(
     wb.close()
     with pytest.raises(SchemaMismatchError, match=r"1 row\(s\) do not, e.g. \[7\]"):
         load_workbook_view(synthetic_config)
+
+
+def test_dropping_the_persons_part_is_benign_only_without_threaded_comments():
+    from efe.workbook.verify import FidelitySnapshot, compare
+
+    base = {"xl/workbook.xml", "xl/worksheets/sheet1.xml", "xl/persons/person.xml"}
+    before = FidelitySnapshot(parts=set(base))
+    after = FidelitySnapshot(parts=base - {"xl/persons/person.xml"})
+    assert compare(before, after, require_cached_values=False) == []
+
+    before = FidelitySnapshot(parts=base | {"xl/threadedComments/threadedComment1.xml"})
+    after = FidelitySnapshot(parts=base - {"xl/persons/person.xml"})
+    problems = compare(before, after, require_cached_values=False)
+    assert any("threaded-comment authors" in p for p in problems)
+    assert any("threadedComments" in p for p in problems)
