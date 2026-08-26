@@ -41,7 +41,11 @@ None of those five columns is writable by this tool. `PARTNERS!AC` depends on `A
 and `AB`, which are CRM columns and equally off-limits. So **no write this tool
 makes can change any formula's result anywhere in the workbook.**
 
-`writer.assert_no_precedents_touched` enforces that premise on every run. Those
+`writer.assert_no_precedents_touched` enforces that premise on every enrichment
+run. Promotion is the one deliberate exception: new rows fall inside the
+DASHBOARD's COUNTIF ranges, so the reinjected DASHBOARD totals reflect the input
+version until Sheets recomputes them on open — stated in the CHANGELOG entry and
+the promotion report, never silent. Those
 seven columns are listed by name as `workbook.formula_precedents` in `config.yaml`
 (`Category, Country, Priority_Score, Contacted, Status, Contact_Date,
 Follow_Up_Days`); if someone later adds one of them to `writable_columns`, the run

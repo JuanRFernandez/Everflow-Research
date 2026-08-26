@@ -669,3 +669,14 @@ def test_rows_marked_duplicate_of_are_not_reported_again(synthetic_config, synth
     wb.save(synthetic_workbook)
     wb.close()
     assert len(find_duplicates(load_workbook_view(synthetic_config), synthetic_config)) == 1
+
+
+def test_blank_formula_cell_on_a_human_verified_row_is_still_a_gap(
+    synthetic_config, synthetic_workbook
+):
+    wb = load_workbook(synthetic_workbook)
+    wb["PARTNERS"]["AC7"] = None  # gold row, formula deleted, nothing typed
+    wb.save(synthetic_workbook)
+    wb.close()
+    with pytest.raises(SchemaMismatchError, match=r"1 row\(s\) do not, e.g. \[7\]"):
+        load_workbook_view(synthetic_config)

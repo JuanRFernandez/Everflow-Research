@@ -354,6 +354,21 @@ def _write_changelog_detail(
     return written, created
 
 
+def deliver(candidate: Path, destination: Path) -> None:
+    """Copy the verified candidate to the Drive folder without ever leaving a
+    truncated `.xlsx` behind: the bytes land under a `.part` name first, and only
+    a complete copy is renamed into place (the resolver ignores `.part` files)."""
+    import os
+
+    partial = destination.with_name(destination.name + ".part")
+    try:
+        shutil.copy2(candidate, partial)
+        os.replace(partial, destination)
+    finally:
+        if partial.exists():
+            partial.unlink()
+
+
 def write_enriched(
     cfg: Config,
     view: WorkbookView,
@@ -485,7 +500,7 @@ def write_enriched(
 
         assert_version_free(cfg, target_version)
         guard_writable(destination)
-        shutil.copy2(candidate, destination)
+        deliver(candidate, destination)
         return destination
     finally:
         if candidate.exists():

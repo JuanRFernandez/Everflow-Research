@@ -272,6 +272,16 @@ round (currently: categories 1–3 across the GaPa · Arlberg · Kitzbühel · I
 Zell–Kaprun corridor). Rows outside the targets are skipped with an explicit reason;
 `--categories all --resorts all` runs everything.
 
+**Promotion.** `efe promote <csv>` appends discovery candidates as new rows after
+the last data row — proven empty across every column first, so a note typed on one
+of the rows Sheets pads the sheet with stops the run instead of vanishing. IDs must
+be `EFE-dddd` above the sheet's highest; a domain (exact or registrable) or a
+normalised name already in the sheet leaves the candidate out, listed with the
+reason. Each new row gets the column's dominant `Next_Follow_Up` formula. What
+promotion cannot make true, it says: the DASHBOARD's cached totals in the output
+reflect the input version until Sheets recomputes them on open, and rows beyond
+the DASHBOARD's ranges (or the stale autofilter / dropdown ranges) are reported.
+
 **Never touches the CRM.** Columns Z–AJ (`Contacted` … `Next_Action`) are yours.
 `AC` / `Next_Follow_Up` is a live formula, preserved with its cached result.
 

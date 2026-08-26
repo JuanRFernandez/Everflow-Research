@@ -30,7 +30,12 @@ from efe.models import (
 )
 from efe.pipeline import RunLedger, run_enrichment
 from efe.report import build_summary, print_dry_run, print_summary, write_outputs
-from efe.workbook.promote import plan_promotion, read_candidates, write_promoted
+from efe.workbook.promote import (
+    inspect_ranges,
+    plan_promotion,
+    read_candidates,
+    write_promoted,
+)
 from efe.workbook.reader import (
     WorkbookView,
     file_fingerprint,
@@ -225,15 +230,16 @@ def print_contract_report(cfg, view: WorkbookView, *, reset_state: bool = False)
                 f"formula on all {view.data_rows} data rows"
             )
 
+    writer = view.last_writer or "not recorded (no docProps/app.xml; Sheets exports omit it)"
     if view.formula_cells and view.cached_results:
         console.print(
             f"  cache     {view.cached_results} of {view.formula_cells} formula cells carry "
-            f"a cached result  [dim](last written by {view.last_writer or 'unknown'})[/dim]"
+            f"a cached result  [dim](last written by {writer})[/dim]"
         )
     elif view.formula_cells:
         console.print(
             f"  cache     [yellow]none[/yellow] of {view.formula_cells} formula cells carry a "
-            f"cached result (last written by {view.last_writer or 'unknown'}). Sheets and "
+            f"cached result (last written by {writer}). Sheets and "
             "Excel recompute on open; the output will carry none either."
         )
     console.print("[bold]Continuity[/bold]")
@@ -572,6 +578,47 @@ def cmd_enrich(args: argparse.Namespace) -> int:
     return 0
 
 
+def _promotion_report(
+    cfg, run_id: str, source: Path, view, plan, *, status: str, prefix: str
+) -> Path:
+    """`<prefix>promotion_<run>.md`: the status first, then what was (or would be) done."""
+    directory = cfg.artifacts_directory
+    directory.mkdir(parents=True, exist_ok=True)
+    report = directory / f"{prefix}promotion_{run_id}.md"
+    heading = "Appended" if status.startswith("WRITTEN") else "Planned"
+    lines = [
+        f"# Promotion {run_id}",
+        "",
+        f"**{status}**",
+        "",
+        f"Source: `{source}`",
+        f"Input: `{view.path.name}` (v{view.version:02d}, {view.data_rows} data rows)",
+        "",
+        f"## {heading} ({len(plan.accepted)})",
+        "",
+        "| Row | ID | Entity | Website |",
+        "|---|---|---|---|",
+    ]
+    for row_number, values in plan.accepted:
+        lines.append(
+            f"| {row_number} | {values.get('ID', '')} | {values.get('Entity_Name', '')} | "
+            f"{values.get('Website_URL', '')} |"
+        )
+    lines += [
+        "",
+        f"## Left out ({len(plan.rejected)})",
+        "",
+        "| ID | Entity | Why |",
+        "|---|---|---|",
+    ]
+    for entity_id, name, reason in plan.rejected:
+        lines.append(f"| {entity_id} | {name} | {reason} |")
+    if plan.notices:
+        lines += ["", "## Notes", ""] + [f"- {note}" for note in plan.notices]
+    report.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return report
+
+
 def cmd_promote(args: argparse.Namespace) -> int:
     """Append candidate rows (discovery output) as a new workbook version."""
     cfg = config_mod.load(args.config)
@@ -592,7 +639,7 @@ def cmd_promote(args: argparse.Namespace) -> int:
     record_input_state(cfg, view, "efe promote")
 
     rows = read_candidates(source, cfg)
-    plan = plan_promotion(view, cfg, rows, source)
+    plan = plan_promotion(view, cfg, rows, source, inspect_ranges(view.path, cfg))
     console.print(f"[bold]{run_id}[/bold]  {'DRY RUN' if args.dry_run else 'WRITE'}")
     console.print(
         f"  input: {view.path.name} (v{view.version:02d}, {view.data_rows} data rows)"
@@ -601,36 +648,44 @@ def cmd_promote(args: argparse.Namespace) -> int:
     console.print(f"  {len(rows)} candidates in {source.name}")
     console.print("  " + plan.describe().replace("\n", "\n  "))
 
-    directory = cfg.artifacts_directory
-    directory.mkdir(parents=True, exist_ok=True)
-    report = directory / f"promotion_{run_id}.md"
-    lines = [f"# Promotion {run_id}", "", f"Source: `{source}`", f"Input: `{view.path.name}`", ""]
-    lines.append(f"## Appended ({len(plan.accepted)})")
-    lines.append("")
-    lines.append("| Row | ID | Entity | Website |")
-    lines.append("|---|---|---|---|")
-    for row_number, values in plan.accepted:
-        lines.append(
-            f"| {row_number} | {values.get('ID', '')} | {values.get('Entity_Name', '')} | "
-            f"{values.get('Website_URL', '')} |"
+    if not plan.accepted:
+        console.print(
+            "\n[yellow]Nothing to promote: every candidate is already in the sheet or "
+            "repeated. No workbook was written.[/yellow]"
         )
-    lines += [
-        "",
-        f"## Left out ({len(plan.rejected)})",
-        "",
-        "| ID | Entity | Why |",
-        "|---|---|---|",
-    ]
-    for entity_id, name, reason in plan.rejected:
-        lines.append(f"| {entity_id} | {name} | {reason} |")
-    report.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        report = _promotion_report(
+            cfg,
+            run_id,
+            source,
+            view,
+            plan,
+            status="NOTHING TO PROMOTE - nothing written",
+            prefix="NOWRITE_",
+        )
+        announce(cfg, {"report": report})
+        return 0
 
     if args.dry_run:
+        report = _promotion_report(
+            cfg, run_id, source, view, plan, status="DRY RUN - nothing written", prefix="DRYRUN_"
+        )
         console.print("\n[yellow]Dry run: no workbook was written.[/yellow]")
         announce(cfg, {"report": report})
         return 0
 
-    written_path = write_promoted(cfg, view, plan, run_id=run_id, output_path=destination)
+    try:
+        written_path = write_promoted(cfg, view, plan, run_id=run_id, output_path=destination)
+    except WorkbookGuardError as exc:
+        _promotion_report(
+            cfg,
+            run_id,
+            source,
+            view,
+            plan,
+            status=f"REFUSED - {str(exc).splitlines()[0]}",
+            prefix="REFUSED_",
+        )
+        raise
     save_state(
         state_path(cfg.state_directory),
         WorkbookState.now(
@@ -642,10 +697,12 @@ def cmd_promote(args: argparse.Namespace) -> int:
             file_sha256=file_fingerprint(written_path),
         ),
     )
+    report = _promotion_report(
+        cfg, run_id, source, view, plan, status=f"WRITTEN: {written_path.name}", prefix=""
+    )
     console.print(
         f"\n[green]{len(plan.accepted)} rows appended[/green] at worksheet rows "
-        f"{plan.first_row}..{plan.first_row + len(plan.accepted) - 1}; "
-        f"{len(plan.rejected)} left out."
+        f"{plan.first_row}..{plan.last_row}; {len(plan.rejected)} left out."
     )
     announce(cfg, {"report": report}, workbook=written_path)
     console.print(f"\n[dim]input untouched: {view.path}[/dim]")

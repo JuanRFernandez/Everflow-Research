@@ -344,11 +344,20 @@ def inspect_schema(wb: Workbook, cfg: Config, label: str = "") -> SchemaReport:
     header_problems = header_diff(spec.header, header)
     populated = last_data_row(ws, spec)
     gaps = formula_gaps(ws, spec, populated) if not header_problems else {}
+    # A human-verified row may hold a TYPED value instead of the formula; a blank
+    # cell there is still a gap (the formula was deleted and nothing replaced it).
     gold = human_verified_rows(ws, spec, cfg, populated) if gaps else set()
-    overrides = {n: [r for r in rows if r in gold] for n, rows in gaps.items()}
-    overrides = {n: rows for n, rows in overrides.items() if rows}
-    gaps = {n: [r for r in rows if r not in gold] for n, rows in gaps.items()}
-    gaps = {n: rows for n, rows in gaps.items() if rows}
+    overrides: dict[str, list[int]] = {}
+    remaining: dict[str, list[int]] = {}
+    for name, rows in gaps.items():
+        col = column_index_from_string(spec.letter_of(name))
+        typed = [r for r in rows if r in gold and ws.cell(r, col).value not in (None, "")]
+        if typed:
+            overrides[name] = typed
+        left = [r for r in rows if r not in typed]
+        if left:
+            remaining[name] = left
+    gaps = remaining
     for name, rows in overrides.items():
         log.info(
             "%s: %d human-verified row(s) carry a typed value instead of the formula: %s",
