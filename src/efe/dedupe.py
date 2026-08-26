@@ -34,17 +34,39 @@ _TOKEN_SPLIT_RE = re.compile(r"[^a-z0-9]+")
 
 #: CRM columns, shown side by side so an operator can see what each row would lose.
 CRM_FIELDS = (
-    "Contacted", "Contact_Date", "Follow_Up_Days", "Next_Follow_Up", "Email_Sent",
-    "Call_Made", "WhatsApp_Sent", "Meeting_Booked", "Agreement_Signed", "Status",
+    "Contacted",
+    "Contact_Date",
+    "Follow_Up_Days",
+    "Next_Follow_Up",
+    "Email_Sent",
+    "Call_Made",
+    "WhatsApp_Sent",
+    "Meeting_Booked",
+    "Agreement_Signed",
+    "Status",
     "Next_Action",
 )
 
 #: Data columns counted when ranking which row is the fuller record.
 DATA_FIELDS = (
-    "entity_name", "category", "subcategory", "resort_base", "region_valley",
-    "country", "website_url", "general_email", "sales_b2b_email", "phone", "whatsapp",
-    "contact_person_name", "contact_person_role", "linkedin_url", "instagram_handle",
-    "segment_tier", "commission_terms", "source_url",
+    "entity_name",
+    "category",
+    "subcategory",
+    "resort_base",
+    "region_valley",
+    "country",
+    "website_url",
+    "general_email",
+    "sales_b2b_email",
+    "phone",
+    "whatsapp",
+    "contact_person_name",
+    "contact_person_role",
+    "linkedin_url",
+    "instagram_handle",
+    "segment_tier",
+    "commission_terms",
+    "source_url",
 )
 
 
@@ -61,9 +83,7 @@ def name_tokens(name: str, stopwords: set[str]) -> frozenset[str]:
     genuinely different companies.
     """
     return frozenset(
-        token
-        for token in _TOKEN_SPLIT_RE.split(fold(name))
-        if token and token not in stopwords
+        token for token in _TOKEN_SPLIT_RE.split(fold(name)) if token and token not in stopwords
     )
 
 
@@ -77,7 +97,7 @@ class DuplicatePair:
     name_b: str
     domain_a: str
     domain_b: str
-    relation: str                       # "identical name" | "one name extends the other"
+    relation: str  # "identical name" | "one name extends the other"
     extra_tokens: list[str] = field(default_factory=list)
     filled_a: int = 0
     filled_b: int = 0
@@ -166,11 +186,7 @@ class DuplicatePair:
 
 def _filled_count(row: PartnerRow, cfg: Config) -> int:
     spec = cfg.workbook
-    return sum(
-        1
-        for logical in DATA_FIELDS
-        if not spec.is_empty(row.get(spec.column_for(logical)))
-    )
+    return sum(1 for logical in DATA_FIELDS if not spec.is_empty(row.get(spec.column_for(logical))))
 
 
 def _crm_state(row: PartnerRow, header_to_letter: dict[str, str]) -> dict[str, str]:
@@ -197,7 +213,15 @@ def find_duplicates(view: WorkbookView, cfg: Config) -> list[DuplicatePair]:
     # name all eleven without eleven more config entries.
     header_to_letter = dict(view.header_letters)
 
-    rows = [pr for pr in view.rows if pr.get(name_col)]
+    # A row the human already marked as a duplicate (Status 'Duplicate of EFE-xxxx')
+    # is resolved: it is kept for its history and never paired again.
+    status_col = header_to_letter.get("Status", "")
+    rows = [
+        pr
+        for pr in view.rows
+        if pr.get(name_col)
+        and not (status_col and pr.get(status_col).strip().lower().startswith("duplicate of"))
+    ]
     tokens = {pr.row: name_tokens(pr.get(name_col), stopwords) for pr in rows}
 
     pairs: list[DuplicatePair] = []
@@ -232,8 +256,9 @@ def find_duplicates(view: WorkbookView, cfg: Config) -> list[DuplicatePair]:
                 continue
 
             pairs.append(
-                _build_pair(first, second, relation, extra, cfg, header_to_letter,
-                            name_col, website_col)
+                _build_pair(
+                    first, second, relation, extra, cfg, header_to_letter, name_col, website_col
+                )
             )
 
     pairs.sort(key=lambda p: (p.row_a, p.row_b))
@@ -241,8 +266,14 @@ def find_duplicates(view: WorkbookView, cfg: Config) -> list[DuplicatePair]:
 
 
 def _build_pair(
-    first: PartnerRow, second: PartnerRow, relation: str, extra: list[str],
-    cfg: Config, header_to_letter: dict[str, str], name_col: str, website_col: str,
+    first: PartnerRow,
+    second: PartnerRow,
+    relation: str,
+    extra: list[str],
+    cfg: Config,
+    header_to_letter: dict[str, str],
+    name_col: str,
+    website_col: str,
 ) -> DuplicatePair:
     return DuplicatePair(
         row_a=first.row,
@@ -261,7 +292,9 @@ def _build_pair(
 
 
 def render_duplicates_report(
-    pairs: list[DuplicatePair], view: WorkbookView, cfg: Config,
+    pairs: list[DuplicatePair],
+    view: WorkbookView,
+    cfg: Config,
     generated_at: datetime | None = None,
 ) -> str:
     """A decision sheet: both rows side by side, and a recommendation per pair."""
@@ -328,8 +361,10 @@ def render_duplicates_report(
             mark = " ⚠️" if left != right else ""
             add(f"| {crm_field} | {left or '—'} | {right or '—'}{mark} |")
         add("")
-        add(f"- **Match:** {pair.relation}"
-            + (f" (extra words: {', '.join(pair.extra_tokens)})" if pair.extra_tokens else ""))
+        add(
+            f"- **Match:** {pair.relation}"
+            + (f" (extra words: {', '.join(pair.extra_tokens)})" if pair.extra_tokens else "")
+        )
         add(f"- **Same domain:** {'yes' if pair.same_domain else 'no — check carefully'}")
         add(f"- **Recommendation: {action}** — {why}")
         crm_a, crm_b = pair.crm_rows

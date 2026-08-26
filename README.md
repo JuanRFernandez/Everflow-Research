@@ -106,8 +106,14 @@ uv run efe enrich
 # Which file will be read, why, and whether it honours the contract. Changes nothing.
 uv run efe check
 
-# Report duplicate PARTNERS rows. Detection only — never merges.
+# Report duplicate PARTNERS rows. Detection only — never merges. A row whose Status
+# reads 'Duplicate of EFE-xxxx' counts as resolved and is not reported again.
 uv run efe duplicates
+
+# Append the rows of a PARTNERS-shaped candidates CSV (discovery output) as the next
+# version: IDs, domains and names already in the sheet are left out and listed.
+uv run efe promote data/out/2026-08-25_hotel_candidates.csv --dry-run
+uv run efe promote data/out/2026-08-25_hotel_candidates.csv
 
 # Prove an emitted file is faithful to its input.
 uv run efe verify --against ".../..._v03.xlsx" ".../..._v04.xlsx"
@@ -168,12 +174,14 @@ or a column letter; a new version never needs a config edit.
   placeholder) are excluded. The highest `vNN` wins, newest mtime breaking a tie.
   The choice and every rejection, with its reason, are logged on every run; zero
   candidates is an error that lists the folder.
-- **Contract.** `workbook.header` is the 39 PARTNERS column names, exact and in
+- **Contract.** `workbook.header` is the 40 PARTNERS column names, exact and in
   order — a workbook that differs is refused with a positional diff. Column
   letters are derived from that header at run time (`writable_columns`,
   `crm_columns`, `formula_columns`, `provenance_columns` are names, not letters).
   `workbook.required_sheets` must all exist (extra sheets are fine).
-  `Next_Follow_Up` must hold a formula on **every** data row.
+  `Next_Follow_Up` must hold a formula on **every** data row, except that a
+  human-verified row (`Contacted = YES`) may carry a typed date instead — those
+  rows are yours end to end, and `efe check` lists them.
 - **Continuity.** After each successful load, `data/state/workbook.json` records
   the file, its version, its data-row count and a header hash. The next load is
   compared with it: fewer rows, a lower version or a changed header stops the run

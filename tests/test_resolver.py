@@ -211,7 +211,20 @@ def test_letters_are_derived_from_the_header_not_config(synthetic_config):
     assert spec.column_for("round") == "AM"
     assert spec.writable_letters == ["I", "J", "K", "L", "M", "N", "O", "P", "U"]
     assert spec.provenance_letters == ["AK", "AL", "AM"]
-    assert spec.crm_letters == ["Z", "AA", "AB", "AC", "AD", "AE", "AF", "AG", "AH", "AI", "AJ"]
+    assert spec.crm_letters == [
+        "Z",
+        "AA",
+        "AB",
+        "AC",
+        "AD",
+        "AE",
+        "AF",
+        "AG",
+        "AH",
+        "AI",
+        "AJ",
+        "AN",
+    ]
     assert spec.formula_letters == ["AC"]
     assert spec.header_of("AC") == "Next_Follow_Up"
     with pytest.raises(ValueError, match="not in the bound header"):
@@ -232,6 +245,7 @@ def test_state_is_recorded_after_a_load(synthetic_config):
     assert saved.data_rows == 8
     assert saved.header_sha256 == header_hash(view.header)
     assert saved.command == "test"
+    assert saved.file_sha256 == view.fingerprint  # the bytes read are on record
     assert view.previous_state is None  # first run: nothing to compare with
 
 
@@ -609,3 +623,49 @@ def test_input_without_cached_results_is_written_not_refused(synthetic_config, s
     # ... while an input WITH cached results still trips the wire if none come back.
     cached_view = load_workbook_view(synthetic_config, synthetic_workbook, reset_state=True)
     assert cached_view.cached_results == 11
+
+
+def test_typed_value_on_a_human_verified_row_is_reported_not_refused(
+    synthetic_config, synthetic_workbook, capsys, monkeypatch
+):
+    """Row 7 is Contacted = YES: its Next_Follow_Up may be a typed date. Row 5 is not."""
+    monkeypatch.setenv("COLUMNS", "200")
+    wb = load_workbook(synthetic_workbook)
+    wb["PARTNERS"]["AC7"] = "2026-09-08"
+    wb.save(synthetic_workbook)
+    wb.close()
+    view = load_workbook_view(synthetic_config)
+    assert view.schema is not None
+    assert view.schema.formula_overrides == {"Next_Follow_Up": [7]}
+    assert view.schema.formula_gaps == {}
+
+    rc = main(["--config", str(synthetic_config.config_path), "check"])
+    text = capsys.readouterr().out
+    assert rc == 0
+    assert "holds a formula on 7 data rows" in text and "1 human-verified row(s)" in text
+
+    wb = load_workbook(synthetic_workbook)
+    wb["PARTNERS"]["AC5"] = "2026-09-08"
+    wb.save(synthetic_workbook)
+    wb.close()
+    with pytest.raises(SchemaMismatchError, match=r"1 row\(s\) do not, e.g. \[5\]"):
+        load_workbook_view(synthetic_config)
+
+
+def test_rows_marked_duplicate_of_are_not_reported_again(synthetic_config, synthetic_workbook):
+    from efe.dedupe import find_duplicates
+
+    wb = load_workbook(synthetic_workbook)
+    ws = wb["PARTNERS"]
+    ws["A10"], ws["B10"], ws["C10"] = "EFE-0009", "Summit Lodge Verbier", "1. Hotels"
+    ws["H10"], ws["Z10"], ws["AI10"] = "https://summitlodge.example", "NO", "Duplicate of EFE-0001"
+    ws["AC10"] = '=IFERROR(AA10+AB10,"")'
+    wb.save(synthetic_workbook)
+    wb.close()
+    assert find_duplicates(load_workbook_view(synthetic_config), synthetic_config) == []
+
+    wb = load_workbook(synthetic_workbook)
+    wb["PARTNERS"]["AI10"] = "Not started"
+    wb.save(synthetic_workbook)
+    wb.close()
+    assert len(find_duplicates(load_workbook_view(synthetic_config), synthetic_config)) == 1

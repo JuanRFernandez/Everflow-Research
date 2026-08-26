@@ -16,7 +16,7 @@ compared with the previous run's, and going backwards is refused.
 | | |
 |---|---|
 | Sheets | `READ_ME, DASHBOARD, PARTNERS, RESORTS_SBI, PRICING_BENCH, REGULATORY, _SOURCES, _GAPS_ROUND2, CHANGELOG` — plus `CHANGELOG_DETAIL` since v04 (required from v05 on) |
-| PARTNERS | `A1:AM254` — 39 columns, 253 data rows (v05: 277 rows, padded to ~1000 by Google Sheets; the padding is ignored) |
+| PARTNERS | `A1:AM254` — 39 columns, 253 data rows (v05: 277 rows, padded to ~1000 by Google Sheets; the padding is ignored; v07 adds a 40th column, `Material_Sent`) |
 | Autofilter | `A1:AM254` |
 | Freeze panes | `C2` |
 | Data validations | 5 — `T2:T254` (Y/N/Unknown), `Y2:Y254` (1–5), `Z2:Z254` (NO/YES), `AD2:AH254` (X), `AI2:AI254` (21 statuses) |

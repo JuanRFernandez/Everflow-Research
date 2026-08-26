@@ -32,10 +32,19 @@ class WorkbookState:
     header_sha256: str
     recorded_at: str
     command: str
+    #: SHA-256 of the file itself, so 'which bytes did the last run read' is on record.
+    file_sha256: str = ""
 
     @classmethod
     def now(
-        cls, *, file: str, version: int, data_rows: int, header: list[str], command: str
+        cls,
+        *,
+        file: str,
+        version: int,
+        data_rows: int,
+        header: list[str],
+        command: str,
+        file_sha256: str = "",
     ) -> WorkbookState:
         return cls(
             file=file,
@@ -44,6 +53,7 @@ class WorkbookState:
             header_sha256=header_hash(header),
             recorded_at=datetime.now().isoformat(timespec="seconds"),
             command=command,
+            file_sha256=file_sha256,
         )
 
     @property
@@ -71,7 +81,10 @@ def load_state(path: Path) -> WorkbookState | None:
         return None
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-        return WorkbookState(**{k: raw[k] for k in WorkbookState.__dataclass_fields__})
+        required = ("file", "version", "data_rows", "header_sha256", "recorded_at", "command")
+        return WorkbookState(
+            **{k: raw[k] for k in required}, file_sha256=str(raw.get("file_sha256", ""))
+        )
     except (ValueError, KeyError, TypeError) as exc:
         raise ContinuityError(
             f"The continuity baseline exists but is unreadable:\n  {path}\n  ({exc})\n"

@@ -266,11 +266,13 @@ def _last_populated_row(ws, width: int) -> int:
     return 0
 
 
-def _append_changelog(ws, version_label: str, run_date: str, message: str) -> list[str]:
+def _append_changelog(
+    ws, version_label: str, run_date: str, message: str, author: str = "efe enrich (Phase 0)"
+) -> list[str]:
     """Append one version-history row after the last real entry; return coordinates."""
     row = _last_populated_row(ws, 4) + 1
     written = []
-    for offset, value in enumerate((version_label, run_date, message, "efe enrich (Phase 0)")):
+    for offset, value in enumerate((version_label, run_date, message, author)):
         cell = ws.cell(row, 1 + offset)
         cell.value = value
         cell.alignment = Alignment(vertical="top", wrap_text=offset == 2)

@@ -30,8 +30,10 @@ from efe.models import (
 )
 from efe.pipeline import RunLedger, run_enrichment
 from efe.report import build_summary, print_dry_run, print_summary, write_outputs
+from efe.workbook.promote import plan_promotion, read_candidates, write_promoted
 from efe.workbook.reader import (
     WorkbookView,
+    file_fingerprint,
     load_workbook_view,
     record_input_state,
     resolve_input,
@@ -131,6 +133,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     verify.add_argument("output", type=Path, help="the emitted file to check")
     verify.add_argument("--against", type=Path, required=True, help="the input it came from")
+    promote = subparsers.add_parser(
+        "promote",
+        help="append candidate rows from a PARTNERS-shaped CSV as a new workbook version",
+    )
+    promote.add_argument("candidates", type=Path, help="CSV with PARTNERS columns")
+    promote.add_argument("--dry-run", action="store_true", help="print the plan; write no workbook")
+    _add_workbook_args(promote)
+
     verify.add_argument(
         "--allow-partners-changes",
         action="store_true",
@@ -201,10 +211,19 @@ def print_contract_report(cfg, view: WorkbookView, *, reset_state: bool = False)
             f"(worksheet rows {spec.first_data_row}..{schema.last_row}{padded})"
         )
     for name in spec.formula_columns:
-        console.print(
-            f"  formula   [green]OK[/green]  {name} ({spec.letter_of(name)}) holds a "
-            f"formula on all {view.data_rows} data rows"
-        )
+        typed = schema.formula_overrides.get(name, []) if schema is not None else []
+        if typed:
+            console.print(
+                f"  formula   [green]OK[/green]  {name} ({spec.letter_of(name)}) holds a "
+                f"formula on {view.data_rows - len(typed)} data rows; "
+                f"[yellow]{len(typed)} human-verified row(s) carry a typed value "
+                f"instead[/yellow]: {typed[:12]}"
+            )
+        else:
+            console.print(
+                f"  formula   [green]OK[/green]  {name} ({spec.letter_of(name)}) holds a "
+                f"formula on all {view.data_rows} data rows"
+            )
 
     if view.formula_cells and view.cached_results:
         console.print(
@@ -233,6 +252,8 @@ def print_contract_report(cfg, view: WorkbookView, *, reset_state: bool = False)
                 f"  status    [green]OK[/green]  v{view.version:02d} with {view.data_rows} "
                 "rows is not behind the baseline"
             )
+    if view.fingerprint:
+        console.print(f"  sha256    [dim]{view.fingerprint}[/dim]")
     console.print(f"  recorded  [dim]{state_path(cfg.state_directory)}[/dim]")
 
 
@@ -533,6 +554,7 @@ def cmd_enrich(args: argparse.Namespace) -> int:
             data_rows=view.data_rows,
             header=view.header,
             command="efe enrich (output)",
+            file_sha256=file_fingerprint(written_path),
         ),
     )
 
@@ -546,6 +568,86 @@ def cmd_enrich(args: argparse.Namespace) -> int:
             "- reported, never merged."
         )
     announce(cfg, outputs, workbook=written_path)
+    console.print(f"\n[dim]input untouched: {view.path}[/dim]")
+    return 0
+
+
+def cmd_promote(args: argparse.Namespace) -> int:
+    """Append candidate rows (discovery output) as a new workbook version."""
+    cfg = config_mod.load(args.config)
+    started_at = datetime.now()
+    run_id = started_at.strftime("%Y%m%d-%H%M%S")
+    source = Path(args.candidates)
+    if not source.is_file():
+        raise SystemExit(f"candidates file not found: {source}")
+
+    view = load_workbook_view(
+        cfg,
+        args.workbook,
+        reset_state=args.reset_state,
+        command="efe promote",
+        record_state=False,
+    )
+    destination = None if args.dry_run else next_version_path(cfg, view.version)
+    record_input_state(cfg, view, "efe promote")
+
+    rows = read_candidates(source, cfg)
+    plan = plan_promotion(view, cfg, rows, source)
+    console.print(f"[bold]{run_id}[/bold]  {'DRY RUN' if args.dry_run else 'WRITE'}")
+    console.print(
+        f"  input: {view.path.name} (v{view.version:02d}, {view.data_rows} data rows)"
+        + (f"  ->  output: {destination.name}" if destination else "")
+    )
+    console.print(f"  {len(rows)} candidates in {source.name}")
+    console.print("  " + plan.describe().replace("\n", "\n  "))
+
+    directory = cfg.artifacts_directory
+    directory.mkdir(parents=True, exist_ok=True)
+    report = directory / f"promotion_{run_id}.md"
+    lines = [f"# Promotion {run_id}", "", f"Source: `{source}`", f"Input: `{view.path.name}`", ""]
+    lines.append(f"## Appended ({len(plan.accepted)})")
+    lines.append("")
+    lines.append("| Row | ID | Entity | Website |")
+    lines.append("|---|---|---|---|")
+    for row_number, values in plan.accepted:
+        lines.append(
+            f"| {row_number} | {values.get('ID', '')} | {values.get('Entity_Name', '')} | "
+            f"{values.get('Website_URL', '')} |"
+        )
+    lines += [
+        "",
+        f"## Left out ({len(plan.rejected)})",
+        "",
+        "| ID | Entity | Why |",
+        "|---|---|---|",
+    ]
+    for entity_id, name, reason in plan.rejected:
+        lines.append(f"| {entity_id} | {name} | {reason} |")
+    report.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    if args.dry_run:
+        console.print("\n[yellow]Dry run: no workbook was written.[/yellow]")
+        announce(cfg, {"report": report})
+        return 0
+
+    written_path = write_promoted(cfg, view, plan, run_id=run_id, output_path=destination)
+    save_state(
+        state_path(cfg.state_directory),
+        WorkbookState.now(
+            file=written_path.name,
+            version=view.version + 1,
+            data_rows=view.data_rows + len(plan.accepted),
+            header=view.header,
+            command="efe promote (output)",
+            file_sha256=file_fingerprint(written_path),
+        ),
+    )
+    console.print(
+        f"\n[green]{len(plan.accepted)} rows appended[/green] at worksheet rows "
+        f"{plan.first_row}..{plan.first_row + len(plan.accepted) - 1}; "
+        f"{len(plan.rejected)} left out."
+    )
+    announce(cfg, {"report": report}, workbook=written_path)
     console.print(f"\n[dim]input untouched: {view.path}[/dim]")
     return 0
 
@@ -570,6 +672,7 @@ def main(argv: list[str] | None = None) -> int:
         "check": cmd_check,
         "verify": cmd_verify,
         "duplicates": cmd_duplicates,
+        "promote": cmd_promote,
     }
     try:
         return handlers[args.command](args)

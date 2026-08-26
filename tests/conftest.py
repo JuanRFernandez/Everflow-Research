@@ -35,7 +35,7 @@ PARTNERS_HEADERS = [
     "Owner_or_Group_Affiliation", "Strategic_Fit_Note", "Priority_Score", "Contacted",
     "Contact_Date", "Follow_Up_Days", "Next_Follow_Up", "Email_Sent", "Call_Made",
     "WhatsApp_Sent", "Meeting_Booked", "Agreement_Signed", "Status", "Next_Action",
-    "Source_URL", "Date_Verified", "Round",
+    "Source_URL", "Date_Verified", "Round", "Material_Sent",
 ]
 
 #: (name, category, country, website, contacted, general_email, resort)

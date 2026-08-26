@@ -37,8 +37,9 @@ workbook:
   header_row: 1
   first_data_row: 2
 
-  # The 39 PARTNERS column names, exact and in order. Letters are derived from this
+  # The 40 PARTNERS column names, exact and in order. Letters are derived from this
   # at run time; a workbook whose header differs is refused with a diff.
+  # Material_Sent (AN) arrived with v07 on 2026-08-26.
   header:
     [ID, Entity_Name, Category, Subcategory, Resort_Base, Region_Valley, Country,
      Website_URL, General_Email, Sales_B2B_Email, Phone, WhatsApp,
@@ -47,7 +48,8 @@ workbook:
      Commission_or_Partner_Terms, Languages_Served, Owner_or_Group_Affiliation,
      Strategic_Fit_Note, Priority_Score, Contacted, Contact_Date, Follow_Up_Days,
      Next_Follow_Up, Email_Sent, Call_Made, WhatsApp_Sent, Meeting_Booked,
-     Agreement_Signed, Status, Next_Action, Source_URL, Date_Verified, Round]
+     Agreement_Signed, Status, Next_Action, Source_URL, Date_Verified, Round,
+     Material_Sent]
 
   # Sheets that must exist. Extra sheets and a different order are tolerated.
   required_sheets:
@@ -106,8 +108,12 @@ workbook:
   # Human-owned CRM columns. Writing to any of these is a hard error.
   crm_columns:
     [Contacted, Contact_Date, Follow_Up_Days, Next_Follow_Up, Email_Sent, Call_Made,
-     WhatsApp_Sent, Meeting_Booked, Agreement_Signed, Status, Next_Action]
-  # Live formulas: must hold a formula on EVERY data row; never touched.
+     WhatsApp_Sent, Meeting_Booked, Agreement_Signed, Status, Next_Action,
+     Material_Sent]
+  # Live formulas: must hold a formula on every data row; never touched. A
+  # human-verified row (selection.skip_when, i.e. Contacted = YES) may carry a
+  # typed value instead -- those rows are the human's end to end -- and `efe
+  # check` lists them.
   formula_columns: [Next_Follow_Up]
   # Columns that feed live formulas (DASHBOARD COUNTIFs over PARTNERS, and
   # Next_Follow_Up = Contact_Date + Follow_Up_Days). The writer preserves cached

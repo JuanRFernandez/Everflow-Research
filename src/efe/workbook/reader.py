@@ -282,6 +282,18 @@ def formula_gaps(ws, spec, last_row: int) -> dict[str, list[int]]:
     return gaps
 
 
+def human_verified_rows(ws, spec, cfg: Config, last_row: int) -> set[int]:
+    """Rows the `selection.skip_when` rules mark as human-verified (Contacted = YES)."""
+    gold: set[int] = set()
+    for rule in cfg.selection.skip_when:
+        col = column_index_from_string(spec.letter_of(rule.column))
+        wanted = {v.strip().upper() for v in rule.values}
+        for r in range(spec.first_data_row, last_row + 1):
+            if str(ws.cell(r, col).value or "").strip().upper() in wanted:
+                gold.add(r)
+    return gold
+
+
 @dataclass
 class SchemaReport:
     """What the schema check saw. `problems()` is empty when the contract holds."""
@@ -294,6 +306,10 @@ class SchemaReport:
     data_rows: int
     formula_gaps: dict[str, list[int]]
     padded_rows: int
+    #: Formula column -> human-verified rows (the `selection.skip_when` rule, i.e.
+    #: Contacted = YES) that carry a typed value instead of the formula. Tolerated:
+    #: those rows are the human's end to end, CRM included. Always reported.
+    formula_overrides: dict[str, list[int]] = field(default_factory=dict)
 
     def problems(self) -> list[str]:
         out: list[str] = []
@@ -328,6 +344,18 @@ def inspect_schema(wb: Workbook, cfg: Config, label: str = "") -> SchemaReport:
     header_problems = header_diff(spec.header, header)
     populated = last_data_row(ws, spec)
     gaps = formula_gaps(ws, spec, populated) if not header_problems else {}
+    gold = human_verified_rows(ws, spec, cfg, populated) if gaps else set()
+    overrides = {n: [r for r in rows if r in gold] for n, rows in gaps.items()}
+    overrides = {n: rows for n, rows in overrides.items() if rows}
+    gaps = {n: [r for r in rows if r not in gold] for n, rows in gaps.items()}
+    gaps = {n: rows for n, rows in gaps.items() if rows}
+    for name, rows in overrides.items():
+        log.info(
+            "%s: %d human-verified row(s) carry a typed value instead of the formula: %s",
+            name,
+            len(rows),
+            rows[:12],
+        )
     padded = ws.max_row - populated
     if padded > 0:
         # Tolerated: a spreadsheet app padded the used range. Say so rather than
@@ -348,6 +376,7 @@ def inspect_schema(wb: Workbook, cfg: Config, label: str = "") -> SchemaReport:
         data_rows=max(0, populated - spec.first_data_row + 1),
         formula_gaps=gaps,
         padded_rows=max(0, padded),
+        formula_overrides=overrides,
     )
 
 
@@ -685,6 +714,7 @@ def record_input_state(cfg: Config, view: WorkbookView, command: str) -> bool:
             data_rows=len(view.rows),
             header=view.header,
             command=command,
+            file_sha256=view.fingerprint,
         ),
     )
     return True
