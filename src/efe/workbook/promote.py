@@ -32,10 +32,12 @@ from pathlib import Path
 from openpyxl import load_workbook
 from openpyxl.formula.translate import Translator
 from openpyxl.utils import column_index_from_string, get_column_letter
-from openpyxl.utils.cell import range_boundaries
 
 from efe.config import Config
 from efe.models import CellChange, Confidence, DataClass, VerificationError, today_iso
+
+#: Re-exported so callers that learned it here keep working; it lives in `ranges` now.
+from efe.workbook.ranges import inspect_ranges  # noqa: F401
 from efe.workbook.reader import (
     WorkbookView,
     domain_of,
@@ -62,7 +64,6 @@ ID_PATTERN = re.compile(r"^EFE-\d{4}$")
 NUMERIC_COLUMNS = ("Follow_Up_Days", "Priority_Score")
 #: Second-level labels under which a registrable domain has three labels.
 _SECOND_LEVEL = {"co", "com", "net", "org", "ac", "gov", "edu", "or", "ne"}
-_RANGE_RE = re.compile(r"PARTNERS!\$?[A-Z]+\$?(\d+):\$?[A-Z]+\$?(\d+)")
 
 
 @dataclass
@@ -210,42 +211,6 @@ def _resort_key(text: str) -> str:
 # ---------------------------------------------------------------------------
 # Planning
 # ---------------------------------------------------------------------------
-
-
-def inspect_ranges(path: Path, cfg: Config) -> dict[str, int | None]:
-    """Where the sheet's range-bound structures end: the PARTNERS autofilter, its
-    data validations, and the highest PARTNERS row any other sheet's formula reads."""
-    spec = cfg.workbook
-    wb = load_workbook(path, data_only=False)
-    try:
-        ws = wb[spec.sheet]
-        autofilter = None
-        if ws.auto_filter.ref:
-            _, _, _, autofilter = range_boundaries(ws.auto_filter.ref.replace("$", ""))
-        validation = None
-        for dv in ws.data_validations.dataValidation:
-            for rng in str(dv.sqref).split():
-                _, _, _, bottom = range_boundaries(rng.replace("$", ""))
-                validation = bottom if validation is None else max(validation, bottom)
-        formula_reach = None
-        for other in wb.worksheets:
-            if other.title == spec.sheet:
-                continue
-            for row in other.iter_rows():
-                for cell in row:
-                    if isinstance(cell.value, str) and cell.value.startswith("="):
-                        for _, end in _RANGE_RE.findall(cell.value):
-                            reach = int(end)
-                            formula_reach = (
-                                reach if formula_reach is None else max(formula_reach, reach)
-                            )
-        return {
-            "autofilter_last_row": autofilter,
-            "validation_last_row": validation,
-            "formula_reach_last_row": formula_reach,
-        }
-    finally:
-        wb.close()
 
 
 def plan_promotion(

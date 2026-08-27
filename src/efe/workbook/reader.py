@@ -49,6 +49,7 @@ from efe.workbook.resolve import (
 )
 from efe.workbook.state import (
     WorkbookState,
+    continuity_notices,
     continuity_problems,
     load_state,
     save_state,
@@ -310,6 +311,10 @@ class SchemaReport:
     #: Contacted = YES) that carry a typed value instead of the formula. Tolerated:
     #: those rows are the human's end to end, CRM included. Always reported.
     formula_overrides: dict[str, list[int]] = field(default_factory=dict)
+    #: ID -> the rows holding it, for every ID used more than once. Reported, never
+    #: fatal: a workbook can carry duplicates today and still be enrichable, and
+    #: failing here would block every run until a human sat down to renumber.
+    duplicate_ids: dict[str, list[int]] = field(default_factory=dict)
 
     def problems(self) -> list[str]:
         out: list[str] = []
@@ -365,6 +370,21 @@ def inspect_schema(wb: Workbook, cfg: Config, label: str = "") -> SchemaReport:
             len(rows),
             rows[:12],
         )
+    seen_ids: dict[str, list[int]] = {}
+    if not header_problems:
+        id_col = column_index_from_string(spec.column_for("id"))
+        for row in range(spec.first_data_row, populated + 1):
+            value = str(ws.cell(row, id_col).value or "").strip()
+            if value:
+                seen_ids.setdefault(value, []).append(row)
+    duplicate_ids = {k: v for k, v in seen_ids.items() if len(v) > 1}
+    if duplicate_ids:
+        log.warning(
+            "%s: %d ID(s) are used more than once, e.g. %s",
+            spec.sheet,
+            len(duplicate_ids),
+            {k: v for k, v in list(duplicate_ids.items())[:3]},
+        )
     padded = ws.max_row - populated
     if padded > 0:
         # Tolerated: a spreadsheet app padded the used range. Say so rather than
@@ -386,6 +406,7 @@ def inspect_schema(wb: Workbook, cfg: Config, label: str = "") -> SchemaReport:
         formula_gaps=gaps,
         padded_rows=max(0, padded),
         formula_overrides=overrides,
+        duplicate_ids=duplicate_ids,
     )
 
 
@@ -464,6 +485,8 @@ class WorkbookView:
     previous_state: WorkbookState | None = None
     #: SHA-256 of the file as read; the writer refuses to work from a changed file.
     fingerprint: str = ""
+    #: Differences from the baseline that do not block the run but are not silent.
+    continuity_notices: list[str] = field(default_factory=list)
     #: Formula cells in the file, and how many carry a cached result. A file last
     #: written by openpyxl carries none; Sheets and Excel recompute on open.
     formula_cells: int = 0
@@ -634,6 +657,7 @@ def load_workbook_view(
             cells = {letters[c - 1]: ws.cell(r, c).value for c in range(1, width + 1)}
             rows.append(PartnerRow(row=r, cells=cells))
 
+        fingerprint = file_fingerprint(target)
         try:
             previous = load_state(state_path(cfg.state_directory))
         except ContinuityError:
@@ -649,8 +673,22 @@ def load_workbook_view(
                 version=chosen.version,
                 data_rows=len(rows),
                 header=report.header_found,
+                file_sha256=fingerprint,
             )
         )
+        notices = (
+            []
+            if reset_state
+            else continuity_notices(
+                previous,
+                file=target.name,
+                version=chosen.version,
+                data_rows=len(rows),
+                file_sha256=fingerprint,
+            )
+        )
+        for notice in notices:
+            log.warning("%s", notice)
         if problems:
             joined = "\n  - ".join(problems)
             raise ContinuityError(
@@ -689,7 +727,8 @@ def load_workbook_view(
             resolution=resolution,
             schema=report,
             previous_state=previous,
-            fingerprint=file_fingerprint(target),
+            fingerprint=fingerprint,
+            continuity_notices=notices,
             formula_cells=len(cached),
             cached_results=sum(1 for v in cached.values() if v is not None),
             last_writer=last_writer_of(target),

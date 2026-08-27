@@ -103,6 +103,39 @@ def save_state(path: Path, state: WorkbookState) -> None:
     os.replace(tmp, path)
 
 
+def continuity_notices(
+    previous: WorkbookState | None,
+    *,
+    file: str,
+    version: int,
+    data_rows: int,
+    file_sha256: str,
+) -> list[str]:
+    """Differences from the baseline that do not block a run but must not be silent.
+
+    The audit of 2026-08-27 is what this exists for: v08 gained 66 hand-typed rows
+    overnight under an unchanged version number, and every command accepted it
+    without a word. Editing in Google Sheets is the sanctioned workflow, so this
+    cannot be a refusal -- but a run that trusted the baseline's row count would be
+    reasoning about a file that no longer exists.
+    """
+    if previous is None or not file_sha256 or not previous.file_sha256:
+        return []
+    if previous.file_sha256 == file_sha256:
+        return []
+    if previous.version and version and version != previous.version:
+        return []  # a new version is expected to differ
+    delta = data_rows - previous.data_rows
+    change = f"{delta:+d}" if delta else "same count"
+    return [
+        f"{file} carries the baseline's version but different bytes:\n"
+        f"      baseline  sha256 {previous.file_sha256[:12]}...  {previous.data_rows} data rows"
+        f"   (recorded {previous.recorded_at}, {previous.command})\n"
+        f"      this file sha256 {file_sha256[:12]}...  {data_rows} data rows   ({change})\n"
+        "      The file was edited outside this tool since the baseline was recorded."
+    ]
+
+
 def continuity_problems(
     previous: WorkbookState | None,
     *,
@@ -110,6 +143,7 @@ def continuity_problems(
     version: int,
     data_rows: int,
     header: list[str],
+    file_sha256: str = "",
 ) -> list[str]:
     """Why the chosen workbook cannot follow the previous one. Empty == fine.
 
@@ -131,9 +165,14 @@ def continuity_problems(
             f"({previous.file}), this file is v{version:02d} ({file})"
         )
     if data_rows < previous.data_rows:
+        edited = (
+            " and the bytes differ from the baseline, so this is an edit, not a stale sync"
+            if file_sha256 and previous.file_sha256 and file_sha256 != previous.file_sha256
+            else ""
+        )
         problems.append(
             f"fewer data rows than last run: {previous.data_rows} in {previous.file}, "
-            f"{data_rows} in {file} - an old file, or a sync that is not finished"
+            f"{data_rows} in {file} - an old file, or a sync that is not finished{edited}"
         )
     if header_hash(header) != previous.header_sha256:
         problems.append(

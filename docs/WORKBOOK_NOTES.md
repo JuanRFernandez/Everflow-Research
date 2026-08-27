@@ -218,3 +218,41 @@ blank and `AB` is 14, so the formula evaluates to `14` — which Excel renders a
 1900-01-14 under a date format. It is harmless while `Contacted = NO`, and it is your
 formula, so nothing here touches it. Flagging it in case the DASHBOARD ever counts on
 that column.
+
+## The v08 incident and the v09 corrective release — 2026-08-27
+
+**What happened.** On 2026-08-26 `efe promote` emitted v08 (343 rows) at 12:02. That
+evening 66 South Tyrol ski schools were added to the same file by hand, at rows
+345–410, under IDs `EFE-0344..0409`. Rows 279–344 already held the 66 promoted hotels
+under `EFE-0359..0439`, so **39 IDs ended up on two different businesses**, and the
+file kept the name `..._v08.xlsx` while its bytes and row count changed.
+
+**Why nothing complained.** Three blind spots, all now closed:
+
+| Blind spot | Now |
+|---|---|
+| Nothing counted distinct IDs | `SchemaReport.duplicate_ids`; `efe check` prints `ids WARN` |
+| Range drift was only reported by `efe promote`, after the fact | `efe.workbook.ranges` measures it; `efe check` prints a `Ranges` block |
+| `data/state/workbook.json` recorded `file_sha256` but never compared it | `state.continuity_notices`; `efe check` prints `Continuity → DRIFT` |
+
+**Why the ski schools moved and not the hotels.** `CHANGELOG_DETAIL` already names
+`EFE-0359..0439` against the promote run of 2026-08-26, so those IDs have an audit
+trail pointing at the hotels. The ski schools had none. They moved to `EFE-0440..0505`,
+which also frees `EFE-0281..0358` again — that block is reserved for
+`data/out/2026-08-24_crm_merge.csv` (78 rows) and is passed to `efe fixup --reserve`
+so the reservation is checkable rather than remembered.
+
+**What v09 changed**, verified three ways (`efe verify --expect-plan`, an independent
+cell-by-cell diff, and `efe check`): exactly 255 PARTNERS cells — 66 `ID`, 148 `Phone`,
+34 `WhatsApp`, 7 `Sales_B2B_Email` — 0 unplanned, 0 planned-but-missing. 409 rows, 409
+distinct IDs. All 638 formulas and all 638 cached results identical.
+
+**What v09 deliberately did not change.** The autofilter (`$A$1:$AM$251`), the five
+data validations (row 251) and the DASHBOARD's ranges (row 400) are still stale, and
+`12. Ski Schools & Instructor Supply` is on no DASHBOARD row. Extending a DASHBOARD
+range rewrites a formula whose cached result is reinjected from the input, so the file
+would ship claiming to count to row 410 while carrying a number that counted to 400;
+and `verify.compare` has no vocabulary for a changed data validation, so allowing one
+would weaken the gate for every future run. Those five items are printed by `efe check`,
+`efe promote` and `efe fixup` from one function (`ranges.render_sheets_handoff`) and are
+fixed by hand in Sheets.

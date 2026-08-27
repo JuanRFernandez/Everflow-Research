@@ -115,6 +115,11 @@ uv run efe duplicates
 uv run efe promote data/out/2026-08-25_hotel_candidates.csv --dry-run
 uv run efe promote data/out/2026-08-25_hotel_candidates.csv
 
+# Draft, review and apply a corrective release (renumber IDs, normalise cells).
+uv run efe fixup --propose --reserve data/out/2026-08-24_crm_merge.csv
+uv run efe fixup data/out/fixup_plan_<run>.csv --dry-run
+uv run efe fixup data/out/fixup_plan_<run>.csv
+
 # Prove an emitted file is faithful to its input.
 uv run efe verify --against ".../..._v03.xlsx" ".../..._v04.xlsx"
 ```
@@ -386,6 +391,46 @@ room), which print the hotel's own address and a labelled website link. IDs star
 EFE-0359 and `Round` is `R3-discovery`. Promotion is human: paste the rows you approve
 into the sheet (as `.xlsx`, not a native Sheet), download, and run `efe enrich` to
 fill contacts.
+
+## Corrective releases: `efe fixup`
+
+Enrichment fills empty cells; promotion appends rows. Neither can renumber an `ID` or
+rewrite a value somebody already typed — `ID` is in no writable set, and the writer
+refuses to overwrite a non-empty cell. That is the right default, and it is also how a
+workbook ended up on 2026-08-26 with **39 IDs used twice**: 66 ski schools were pasted
+in by hand over the ID block 66 promoted hotels already held.
+
+`efe fixup` is the narrow way back, and every safeguard is about not becoming a second
+way to lose data:
+
+- **A plan you read first.** `--propose` writes `data/out/fixup_plan_<run>.csv`, one line
+  per edit with the value it expects to find and why. Nothing runs until you pass that
+  file back.
+- **It can only be applied to the bytes it was computed from** — the plan pins the
+  input's SHA-256 — and every line carries an independent witness (`Guard_Column`,
+  usually the row's `ID`). If any expected value has moved, the **whole run refuses**
+  rather than half-applying a stale plan.
+- **`writable ∪ provenance ∪ {ID}` and nothing else.** CRM columns, formula columns and
+  formula precedents stay unreachable, so cached DASHBOARD totals stay correct.
+- **The post-image must be unique**: every row still holds a distinct ID afterwards, no
+  target is at or below the sheet's highest ID (`--allow-backfill` to override), and
+  none is in a block you reserved with `--reserve <csv>` (the merge CSV's
+  `EFE-0281..0358`, for instance).
+- **It is its own undo.** Every old value goes to `CHANGELOG_DETAIL`; swap `Old` and
+  `New` in the plan and run it again.
+- **It says what it did not fix.** Ambiguities go to a list for you rather than a guess:
+  a cell with two addresses is a GDPR call, a phone with an extension or a toll-free
+  number has no honest E.164 form, and prose in an email column is not an address.
+
+`efe check` now reports the three drifts that let this happen unnoticed: duplicate IDs
+(`ids WARN`), a `Ranges` block (autofilter, dropdowns, DASHBOARD reach, an uncounted
+category, a hand-edited formula shape), and `Continuity → DRIFT` when the file carries
+the baseline's version number but different bytes. All three warn; none is fatal —
+editing in Sheets is the sanctioned workflow, and a cosmetic drift must not block a run.
+
+`efe verify --expect-plan <plan.csv>` proves the narrow claim from outside the writer:
+only the cells that plan names changed on PARTNERS. `--allow-partners-changes` is far
+too coarse for a corrective release.
 
 ## Tests
 

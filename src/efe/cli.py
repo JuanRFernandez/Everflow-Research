@@ -30,12 +30,16 @@ from efe.models import (
 )
 from efe.pipeline import RunLedger, run_enrichment
 from efe.report import build_summary, print_dry_run, print_summary, write_outputs
-from efe.workbook.promote import (
-    inspect_ranges,
-    plan_promotion,
-    read_candidates,
-    write_promoted,
+from efe.workbook.fixup import (
+    assert_fixups_legal,
+    assert_ids_unique_after,
+    propose_fixups,
+    read_fixup_plan,
+    write_fixup_plan,
+    write_fixups,
 )
+from efe.workbook.promote import plan_promotion, read_candidates, write_promoted
+from efe.workbook.ranges import inspect_ranges, inspect_sheet_ranges, render_sheets_handoff
 from efe.workbook.reader import (
     WorkbookView,
     file_fingerprint,
@@ -146,10 +150,51 @@ def build_parser() -> argparse.ArgumentParser:
     promote.add_argument("--dry-run", action="store_true", help="print the plan; write no workbook")
     _add_workbook_args(promote)
 
+    fixup = subparsers.add_parser(
+        "fixup",
+        help="apply a reviewed plan of corrections (renumber IDs, normalise cells)",
+    )
+    fixup.add_argument("plan", type=Path, nargs="?", default=None, help="the plan CSV to apply")
+    fixup.add_argument(
+        "--propose",
+        action="store_true",
+        help="read the workbook and write a draft plan CSV for review; change nothing",
+    )
+    fixup.add_argument("--dry-run", action="store_true", help="print the plan; write no workbook")
+    fixup.add_argument(
+        "--reserve",
+        type=Path,
+        action="append",
+        default=None,
+        metavar="CSV",
+        help="a PARTNERS-shaped CSV whose IDs are spoken for (repeatable)",
+    )
+    fixup.add_argument(
+        "--max-cells", type=int, default=None, help="ceiling on cell edits in one plan"
+    )
+    fixup.add_argument(
+        "--allow-backfill",
+        action="store_true",
+        help="let a renumber reuse a number below the sheet's highest ID",
+    )
+    fixup.add_argument(
+        "--skip-stale",
+        action="store_true",
+        help="apply the records that still match instead of refusing the whole plan",
+    )
+    _add_workbook_args(fixup)
+
     verify.add_argument(
         "--allow-partners-changes",
         action="store_true",
         help="tolerate value changes on PARTNERS (they are expected after an enrich)",
+    )
+    verify.add_argument(
+        "--expect-plan",
+        type=Path,
+        default=None,
+        metavar="CSV",
+        help="prove only the cells this fixup plan names changed on PARTNERS",
     )
     return parser
 
@@ -230,18 +275,44 @@ def print_contract_report(cfg, view: WorkbookView, *, reset_state: bool = False)
                 f"formula on all {view.data_rows} data rows"
             )
 
-    writer = view.last_writer or "not recorded (no docProps/app.xml; Sheets exports omit it)"
+    duplicates = schema.duplicate_ids if schema is not None else {}
+    if duplicates:
+        sample = ", ".join(
+            f"{k} (rows {', '.join(str(r) for r in v)})" for k, v in list(duplicates.items())[:2]
+        )
+        console.print(
+            f"  ids       [yellow]WARN[/yellow]  {view.data_rows} rows, "
+            f"{view.data_rows - sum(len(v) - 1 for v in duplicates.values())} distinct IDs - "
+            f"{len(duplicates)} used more than once, e.g. {sample}"
+        )
+    else:
+        console.print(
+            f"  ids       [green]OK[/green]  {view.data_rows} rows, {view.data_rows} distinct IDs"
+        )
+
+    writer = (
+        f"last written by {view.last_writer}"
+        if view.last_writer
+        else "no docProps/app.xml, as in a Sheets export"
+    )
     if view.formula_cells and view.cached_results:
         console.print(
             f"  cache     {view.cached_results} of {view.formula_cells} formula cells carry "
-            f"a cached result  [dim](last written by {writer})[/dim]"
+            f"a cached result  [dim]({writer})[/dim]"
         )
     elif view.formula_cells:
         console.print(
             f"  cache     [yellow]none[/yellow] of {view.formula_cells} formula cells carry a "
-            f"cached result (last written by {writer}). Sheets and "
+            f"cached result ({writer}). Sheets and "
             "Excel recompute on open; the output will carry none either."
         )
+    ranges = inspect_sheet_ranges(view.path, cfg)
+    drift = ranges.drift()
+    if drift:
+        console.print("[bold]Ranges[/bold]  [dim](Sheets-side, fixed by hand -- never fatal)[/dim]")
+        for line in drift:
+            console.print(f"  [yellow]{line}[/yellow]")
+
     console.print("[bold]Continuity[/bold]")
     prev = view.previous_state
     if prev is None:
@@ -253,6 +324,10 @@ def print_contract_report(cfg, view: WorkbookView, *, reset_state: bool = False)
         )
         if reset_state:
             console.print("  status    [yellow]reset[/yellow]  this file is the new baseline")
+        elif view.continuity_notices:
+            console.print("  status    [yellow]DRIFT[/yellow]")
+            for notice in view.continuity_notices:
+                console.print(f"      {notice}")
         else:
             console.print(
                 f"  status    [green]OK[/green]  v{view.version:02d} with {view.data_rows} "
@@ -271,8 +346,9 @@ def print_contract_report(cfg, view: WorkbookView, *, reset_state: bool = False)
 def cmd_check(args: argparse.Namespace) -> int:
     cfg = config_mod.load(args.config)
     # The report below prints the resolution in full; keep the log line out of it.
-    logging.getLogger("efe.workbook.resolve").setLevel(logging.WARNING)
-    logging.getLogger("efe.workbook.reader").setLevel(logging.WARNING)
+    # The report below prints resolution, duplicate IDs and drift in full.
+    logging.getLogger("efe.workbook.resolve").setLevel(logging.ERROR)
+    logging.getLogger("efe.workbook.reader").setLevel(logging.ERROR)
     chosen, resolution = resolve_input(cfg, args.workbook)
     print_resolution_block(cfg, resolution)
     view = load_workbook_view(
@@ -311,6 +387,17 @@ def cmd_verify(args: argparse.Namespace) -> int:
     if args.allow_partners_changes:
         sheet = cfg.workbook.sheet
         allowed = {key for key in set(before.values) | set(after.values) if key[0] == sheet}
+
+    if args.expect_plan is not None:
+        # Prove the narrow claim: only the cells this plan names changed on the data
+        # sheet. `--allow-partners-changes` is far too coarse for a corrective release.
+        plan = read_fixup_plan(args.expect_plan, cfg)
+        spec = cfg.workbook
+        spec.bind_header(spec.header)
+        allowed = {(spec.sheet, f"{spec.letter_of(r.column)}{r.row}") for r in plan.records}
+        console.print(
+            f"[dim]{len(allowed)} cell(s) named by {args.expect_plan.name} (exempt)[/dim]"
+        )
 
     new_sheets = set(after.sheets) - set(before.sheets)
     if new_sheets:
@@ -709,6 +796,177 @@ def cmd_promote(args: argparse.Namespace) -> int:
     return 0
 
 
+def _fixup_report(
+    cfg, run_id: str, view, plan, handoff: list[str], *, status: str, prefix: str
+) -> Path:
+    """`<prefix>fixup_<run>.md`: status first, then what changed and what did not."""
+    directory = cfg.artifacts_directory
+    directory.mkdir(parents=True, exist_ok=True)
+    report = directory / f"{prefix}fixup_{run_id}.md"
+    heading = "Applied" if status.startswith("WRITTEN") else "Planned"
+    lines = [
+        f"# Fixup {run_id}",
+        "",
+        f"**{status}**",
+        "",
+        f"Plan: `{plan.source}`",
+        f"Input: `{view.path.name}` (v{view.version:02d}, {view.data_rows} data rows)",
+        "",
+        f"## {heading}: renumbered IDs ({len(plan.renumbers)})",
+        "",
+        "| Row | Entity | Old | New | Why |",
+        "|---|---|---|---|---|",
+    ]
+    for record in plan.renumbers:
+        lines.append(
+            f"| {record.row} | {record.guard_value} | {record.old} | {record.new} | {record.why} |"
+        )
+    lines += [
+        "",
+        f"## {heading}: cell corrections ({len(plan.cells)})",
+        "",
+        "| Row | Column | Old | New | Why |",
+        "|---|---|---|---|---|",
+    ]
+    for record in plan.cells:
+        lines.append(
+            f"| {record.row} | {record.column} | `{record.old}` | `{record.new}` | {record.why} |"
+        )
+    lines += ["", f"## Listed, not automated ({len(plan.review)})", ""]
+    lines += [f"- {item}" for item in plan.review] or ["- (none)"]
+    lines += ["", f"## Not fixed by this tool ({len(handoff)})", ""]
+    lines += [f"{i}. {line}" for i, line in enumerate(handoff, start=1)] or ["- (nothing drifted)"]
+    report.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return report
+
+
+def cmd_fixup(args: argparse.Namespace) -> int:
+    """Apply a reviewed plan of corrections as a new workbook version."""
+    cfg = config_mod.load(args.config)
+    run_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+    if args.plan is None and not args.propose:
+        raise SystemExit("efe fixup needs a plan CSV, or --propose to draft one")
+    if args.plan is not None and not args.plan.is_file():
+        raise SystemExit(f"plan file not found: {args.plan}")
+
+    view = load_workbook_view(
+        cfg, args.workbook, reset_state=args.reset_state, command="efe fixup", record_state=False
+    )
+    ranges = inspect_sheet_ranges(view.path, cfg)
+    handoff = render_sheets_handoff(ranges, cfg)
+
+    reserved: set[str] = set()
+    for source in args.reserve or []:
+        if not source.is_file():
+            raise SystemExit(f"--reserve file not found: {source}")
+        reserved |= {row["ID"] for row in read_candidates(source, cfg) if row.get("ID")}
+    if reserved:
+        console.print(f"[dim]{len(reserved)} ID(s) held back by --reserve[/dim]")
+
+    if args.propose:
+        plan = propose_fixups(view, cfg, reserved_ids=reserved)
+        path = write_fixup_plan(cfg.artifacts_directory / f"fixup_plan_{run_id}.csv", plan)
+        plan.source = path
+        console.print(f"[bold]{run_id}[/bold]  PROPOSE")
+        console.print(
+            f"  input: {view.path.name} (v{view.version:02d}, {view.data_rows} data rows)"
+        )
+        console.print("  " + plan.describe().replace("\n", "\n  "))
+        report = _fixup_report(
+            cfg,
+            run_id,
+            view,
+            plan,
+            handoff,
+            status="PROPOSAL - nothing written",
+            prefix="PROPOSED_",
+        )
+        _print_handoff(handoff)
+        console.print(f"\n[yellow]Review the plan, then apply it:[/yellow] efe fixup {path}")
+        announce(cfg, {"report": report, "changes": path})
+        return 0
+
+    plan = read_fixup_plan(args.plan, cfg)
+    if args.max_cells is not None:
+        import efe.workbook.fixup as fixup_mod
+
+        fixup_mod.MAX_CELLS = args.max_cells
+    assert_fixups_legal(plan, cfg, view)
+    assert_ids_unique_after(
+        plan, cfg, view, reserved_ids=reserved, allow_backfill=args.allow_backfill
+    )
+
+    destination = None if args.dry_run else next_version_path(cfg, view.version)
+    record_input_state(cfg, view, "efe fixup")
+    console.print(f"[bold]{run_id}[/bold]  {'DRY RUN' if args.dry_run else 'WRITE'}")
+    console.print(
+        f"  input: {view.path.name} (v{view.version:02d}, {view.data_rows} data rows)"
+        + (f"  ->  output: {destination.name}" if destination else "")
+    )
+    console.print(f"  plan:  {plan.source.name}  ({len(plan.records)} records)")
+    console.print("  " + plan.describe().replace("\n", "\n  "))
+    _print_handoff(handoff)
+
+    if args.dry_run:
+        report = _fixup_report(
+            cfg, run_id, view, plan, handoff, status="DRY RUN - nothing written", prefix="DRYRUN_"
+        )
+        console.print("\n[yellow]Dry run: no workbook was written.[/yellow]")
+        announce(cfg, {"report": report})
+        return 0
+
+    try:
+        written_path = write_fixups(
+            cfg,
+            view,
+            plan,
+            run_id=run_id,
+            output_path=destination,
+            skip_stale=args.skip_stale,
+            handoff=handoff,
+        )
+    except WorkbookGuardError as exc:
+        _fixup_report(
+            cfg,
+            run_id,
+            view,
+            plan,
+            handoff,
+            status=f"REFUSED - {str(exc).splitlines()[0]}",
+            prefix="REFUSED_",
+        )
+        raise
+    save_state(
+        state_path(cfg.state_directory),
+        WorkbookState.now(
+            file=written_path.name,
+            version=view.version + 1,
+            data_rows=view.data_rows,
+            header=view.header,
+            command="efe fixup (output)",
+            file_sha256=file_fingerprint(written_path),
+        ),
+    )
+    report = _fixup_report(
+        cfg, run_id, view, plan, handoff, status=f"WRITTEN: {written_path.name}", prefix=""
+    )
+    console.print(
+        f"\n[green]{len(plan.renumbers)} ID(s) renumbered, {len(plan.cells)} cell(s) "
+        f"normalised[/green]; {len(plan.review)} left for you."
+    )
+    announce(cfg, {"report": report}, workbook=written_path)
+    console.print(f"\n[dim]input untouched: {view.path}[/dim]")
+    return 0
+
+
+def _print_handoff(handoff: list[str]) -> None:
+    if not handoff:
+        return
+    console.print("\n[bold]NOT fixed by this tool[/bold] - do these in Google Sheets:")
+    for index, line in enumerate(handoff, start=1):
+        console.print(f"  {index}. {line}")
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -730,6 +988,7 @@ def main(argv: list[str] | None = None) -> int:
         "verify": cmd_verify,
         "duplicates": cmd_duplicates,
         "promote": cmd_promote,
+        "fixup": cmd_fixup,
     }
     try:
         return handlers[args.command](args)

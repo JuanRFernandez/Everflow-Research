@@ -695,3 +695,63 @@ def test_dropping_the_persons_part_is_benign_only_without_threaded_comments():
     problems = compare(before, after, require_cached_values=False)
     assert any("threaded-comment authors" in p for p in problems)
     assert any("threadedComments" in p for p in problems)
+
+
+def test_same_version_different_bytes_is_reported_not_refused(
+    synthetic_config, synthetic_workbook, capsys, monkeypatch
+):
+    """Editing in Sheets is the sanctioned workflow, so drift notifies; it never blocks."""
+    monkeypatch.setenv("COLUMNS", "200")
+    view = load_workbook_view(synthetic_config)
+    save_state(
+        state_path(synthetic_config.state_directory),
+        WorkbookState.now(
+            file=view.path.name,
+            version=view.version,
+            data_rows=view.data_rows,
+            header=view.header,
+            command="test",
+            file_sha256="0" * 64,
+        ),
+    )
+    again = load_workbook_view(synthetic_config)
+    assert again.continuity_notices
+    notice = again.continuity_notices[0]
+    assert "carries the baseline's version but different bytes" in notice
+    assert "000000000000" in notice and view.fingerprint[:12] in notice
+
+    # That load re-recorded the baseline; seed the drift again for the CLI.
+    save_state(
+        state_path(synthetic_config.state_directory),
+        WorkbookState.now(
+            file=view.path.name,
+            version=view.version,
+            data_rows=view.data_rows,
+            header=view.header,
+            command="test",
+            file_sha256="0" * 64,
+        ),
+    )
+    rc = main(["--config", str(synthetic_config.config_path), "check"])
+    text = capsys.readouterr().out
+    assert rc == 0
+    assert "DRIFT" in text
+
+
+def test_a_shrunk_file_still_refuses_and_now_says_the_bytes_differ(
+    synthetic_config, synthetic_workbook
+):
+    view = load_workbook_view(synthetic_config)
+    save_state(
+        state_path(synthetic_config.state_directory),
+        WorkbookState.now(
+            file=view.path.name,
+            version=view.version,
+            data_rows=view.data_rows + 5,
+            header=view.header,
+            command="test",
+            file_sha256="0" * 64,
+        ),
+    )
+    with pytest.raises(ContinuityError, match="this is an edit, not a stale sync"):
+        load_workbook_view(synthetic_config)
