@@ -33,10 +33,10 @@ def test_mailto_wins_provenance(real_config):
 @pytest.mark.parametrize(
     ("address", "method"),
     [
-        ("info@obfuscated-hotel.example", "obfuscated"),      # info [at] x [dot] example
-        ("sales@obfuscated-hotel.example", "obfuscated"),     # sales (at) x.example
+        ("info@obfuscated-hotel.example", "obfuscated"),  # info [at] x [dot] example
+        ("sales@obfuscated-hotel.example", "obfuscated"),  # sales (at) x.example
         ("reception@obfuscated-hotel.example", "plain-text"),  # &#114;eception&#64;
-        ("office@obfuscated-hotel.example", "mailto"),        # %6Fffice@ percent-encoded
+        ("office@obfuscated-hotel.example", "mailto"),  # %6Fffice@ percent-encoded
         ("affairs@obfuscated-hotel.example", "css-reversed"),  # rtl bidi-override span
         ("kontakt@obfuscated-hotel.example", "data-attribute"),
         ("booking@obfuscated-hotel.example", "js-concat"),

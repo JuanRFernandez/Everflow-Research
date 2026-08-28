@@ -62,8 +62,8 @@ def test_region_hint_from_country_then_tld(real_config):
 def test_whatsapp_only_from_explicit_sources(real_config):
     body = fixture_text("whatsapp_links.html")
     found = values(extract_whatsapp(body, "CH", real_config.phone))
-    assert "+41795552030" in found      # api.whatsapp.com link and a labelled number
-    assert "+41796667788" in found      # wa.me link
+    assert "+41795552030" in found  # api.whatsapp.com link and a labelled number
+    assert "+41796667788" in found  # wa.me link
     # The office landline is a tel: link with no WhatsApp label anywhere near it.
     assert "+41279661234" not in found
 

@@ -147,7 +147,7 @@ Re-running with the tab closed costs nothing because every page is cached.
 |---|---|
 | Data rows | 253 |
 | `Round = R1` / `Pre-existing` | 161 / 92 |
-| `Contacted = YES` (the gold rows) | **18** — skipped entirely; 10 have a website, 8 do not |
+| `Contacted = YES` | **18** — as of v03; since 2026-08-29 these rows are enriched like any other (ownership is per column) |
 | Rows with a usable `Website_URL` | 223 (206 unique domains) |
 | Rows the enricher selects | **213** (149 R1 + 64 Pre-existing) |
 | Rows skipped | 40 — 18 gold, 22 without a website |

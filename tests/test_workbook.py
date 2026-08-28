@@ -47,16 +47,25 @@ NOW = datetime(2026, 8, 23, 12, 0, 0)
 
 def change(row, column, field, new_value, *, old_value="TBD", url="https://x.example/contact"):
     return CellChange(
-        row=row, column=column, field=field, entity_id=f"EFE-{row - 1:04d}",
-        entity_name="Test Entity", old_value=old_value, new_value=new_value,
-        confidence=Confidence.HIGH, data_class=DataClass.CORPORATE_ROLE,
-        source_url=url, fetched_at=NOW, extractor="tests",
+        row=row,
+        column=column,
+        field=field,
+        entity_id=f"EFE-{row - 1:04d}",
+        entity_name="Test Entity",
+        old_value=old_value,
+        new_value=new_value,
+        confidence=Confidence.HIGH,
+        data_class=DataClass.CORPORATE_ROLE,
+        source_url=url,
+        fetched_at=NOW,
+        extractor="tests",
     )
 
 
 # ---------------------------------------------------------------------------
 # Guards
 # ---------------------------------------------------------------------------
+
 
 def test_missing_file_reports_a_drive_sync_problem(tmp_path):
     with pytest.raises(DriveSyncError, match="not found"):
@@ -112,19 +121,28 @@ def test_schema_mismatch_is_caught(synthetic_config, synthetic_workbook):
 # Selection
 # ---------------------------------------------------------------------------
 
-def test_selection_skips_gold_rows_and_rows_without_a_website(synthetic_config):
+
+def test_selection_keeps_contacted_rows_and_skips_rows_without_a_website(
+    synthetic_config,
+):
+    """Contacting a partner must not freeze its row.
+
+    That row-level skip is the bug the column model replaces: the moment a
+    hotel answers is the moment its missing WhatsApp and LinkedIn matter most.
+    Its CRM columns are protected by name instead, in every row.
+    """
     view = load_workbook_view(synthetic_config)
     candidates, skipped = select_candidates(view, synthetic_config)
     names = {c.name for c in candidates}
 
-    assert "Already Contacted Agency" not in names, "Contacted=YES row must never be fetched"
+    assert "Already Contacted Agency" in names
     assert "No Website Row" not in names
     assert "Summit Lodge Verbier" in names
     # A row with one filled field but others TBD is still worth enriching.
     assert "Filled Row" in names
 
     reasons = " ".join(skipped.values())
-    assert "human-verified row" in reasons
+    assert "human-verified row" not in reasons
     assert "no usable Website_URL" in reasons
 
 
@@ -150,6 +168,7 @@ def test_source_ledger_is_read(synthetic_config):
 # ---------------------------------------------------------------------------
 # Cached-value reinjection
 # ---------------------------------------------------------------------------
+
 
 def test_fixture_really_has_cached_values(synthetic_workbook):
     cached = read_cached_values(synthetic_workbook)
@@ -181,6 +200,7 @@ def test_openpyxl_roundtrip_loses_cached_values_and_reinjection_restores_them(
 # The write
 # ---------------------------------------------------------------------------
 
+
 def test_write_fills_only_the_intended_cells(synthetic_config):
     view = load_workbook_view(synthetic_config)
     changes = [
@@ -204,7 +224,8 @@ def test_write_preserves_formulas_validations_and_cached_values(synthetic_config
     view = load_workbook_view(synthetic_config)
     before = snapshot(view.path)
     out = write_enriched(
-        synthetic_config, view,
+        synthetic_config,
+        view,
         [change(2, "I", "general_email", "info@summitlodge.example")],
         run_id="test-002",
     )
@@ -224,7 +245,8 @@ def test_crm_columns_are_untouched_by_a_write(synthetic_config):
     view = load_workbook_view(synthetic_config)
     before = snapshot(view.path)
     out = write_enriched(
-        synthetic_config, view,
+        synthetic_config,
+        view,
         [change(2, "I", "general_email", "info@summitlodge.example")],
         run_id="test-003",
     )
@@ -271,7 +293,8 @@ def test_existing_source_url_is_appended_not_replaced(synthetic_config, syntheti
 
     view = load_workbook_view(synthetic_config)
     out = write_enriched(
-        synthetic_config, view,
+        synthetic_config,
+        view,
         [change(2, "I", "general_email", "info@summitlodge.example")],
         run_id="test-005",
     )
@@ -285,28 +308,42 @@ def test_existing_source_url_is_appended_not_replaced(synthetic_config, syntheti
 def test_changelog_row_and_detail_sheet_are_added(synthetic_config):
     view = load_workbook_view(synthetic_config)
     held = [
-        change(2, "I", "general_email", "reservations@summitlodge.example",
-               url="https://x.example/contact")
+        change(
+            2,
+            "I",
+            "general_email",
+            "reservations@summitlodge.example",
+            url="https://x.example/contact",
+        )
     ]
     out = write_enriched(
-        synthetic_config, view,
+        synthetic_config,
+        view,
         [change(2, "I", "general_email", "info@summitlodge.example")],
-        run_id="test-006", held_back=held,
+        run_id="test-006",
+        held_back=held,
     )
     wb = load_workbook(out)
     assert synthetic_config.workbook.changelog_detail_sheet in wb.sheetnames
 
     detail = wb[synthetic_config.workbook.changelog_detail_sheet]
     headers = [detail.cell(1, c).value for c in range(1, 16)]
-    assert headers[:7] == ["Timestamp", "Run_ID", "Row", "Entity_ID", "Entity_Name",
-                           "Column", "Field"]
+    assert headers[:7] == [
+        "Timestamp",
+        "Run_ID",
+        "Row",
+        "Entity_ID",
+        "Entity_Name",
+        "Column",
+        "Field",
+    ]
     recorded = {detail.cell(r, 9).value for r in range(2, detail.max_row + 1)}
     assert "info@summitlodge.example" in recorded
     assert "reservations@summitlodge.example" in recorded, "held-back values are logged too"
 
     changelog = wb["CHANGELOG"]
     last = [changelog.cell(changelog.max_row, c).value for c in range(1, 5)]
-    assert last[0] == out.stem.rsplit("_", 1)[-1]      # the emitted version label
+    assert last[0] == out.stem.rsplit("_", 1)[-1]  # the emitted version label
     assert "test-006" in last[2]
     assert "CHANGELOG_DETAIL" in last[2]
     wb.close()
@@ -316,21 +353,20 @@ def test_changelog_row_and_detail_sheet_are_added(synthetic_config):
 # Refusals
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     ("column", "match"),
     [
         ("Z", "human-owned CRM"),
         ("AI", "human-owned CRM"),
-        ("AC", "human-owned CRM"),   # the Next_Follow_Up formula
+        ("AC", "human-owned CRM"),  # the Next_Follow_Up formula
         ("B", "not in writable_columns"),
     ],
 )
 def test_writer_refuses_forbidden_columns(synthetic_config, column, match):
     view = load_workbook_view(synthetic_config)
     with pytest.raises(VerificationError, match=match):
-        write_enriched(
-            synthetic_config, view, [change(2, column, "nope", "x")], run_id="test-007"
-        )
+        write_enriched(synthetic_config, view, [change(2, column, "nope", "x")], run_id="test-007")
 
 
 def test_writer_refuses_to_overwrite_a_filled_cell(synthetic_config):
@@ -338,9 +374,13 @@ def test_writer_refuses_to_overwrite_a_filled_cell(synthetic_config):
     # Row 8 is `Filled Row`, whose General_Email already holds a real address.
     with pytest.raises(VerificationError, match="refusing to overwrite"):
         write_enriched(
-            synthetic_config, view,
-            [change(8, "I", "general_email", "other@filled.example",
-                    old_value="info@filled.example")],
+            synthetic_config,
+            view,
+            [
+                change(
+                    8, "I", "general_email", "other@filled.example", old_value="info@filled.example"
+                )
+            ],
             run_id="test-008",
         )
 
@@ -349,7 +389,8 @@ def test_writer_refuses_a_value_without_provenance(synthetic_config):
     view = load_workbook_view(synthetic_config)
     with pytest.raises(VerificationError, match="without provenance"):
         write_enriched(
-            synthetic_config, view,
+            synthetic_config,
+            view,
             [change(2, "I", "general_email", "info@x.example", url="")],
             run_id="test-009",
         )
@@ -367,8 +408,7 @@ def test_precedent_guard_blocks_columns_that_feed_formulas(synthetic_config):
             assert_no_precedents_touched([change(2, column, "x", "y")], synthetic_config)
 
     # A column the enricher actually writes is not a precedent.
-    assert_no_precedents_touched([change(2, "I", "general_email", "a@b.example")],
-                                 synthetic_config)
+    assert_no_precedents_touched([change(2, "I", "general_email", "a@b.example")], synthetic_config)
 
 
 def test_nothing_is_written_when_the_change_set_is_illegal(synthetic_config):
@@ -386,7 +426,8 @@ def test_input_is_never_modified(synthetic_config):
     view = load_workbook_view(synthetic_config)
     original = view.path.read_bytes()
     write_enriched(
-        synthetic_config, view,
+        synthetic_config,
+        view,
         [change(2, "I", "general_email", "info@summitlodge.example")],
         run_id="test-012",
     )
@@ -396,6 +437,7 @@ def test_input_is_never_modified(synthetic_config):
 # ---------------------------------------------------------------------------
 # The fidelity gate itself
 # ---------------------------------------------------------------------------
+
 
 def test_gate_detects_a_corrupted_formula(synthetic_config, tmp_path):
     view = load_workbook_view(synthetic_config)
@@ -428,7 +470,7 @@ def test_gate_detects_missing_cached_values(synthetic_config, tmp_path):
     stale = tmp_path / "stale.xlsx"
     shutil.copy2(view.path, stale)
     wb = load_workbook(stale)
-    wb.save(stale)          # openpyxl drops the cached results
+    wb.save(stale)  # openpyxl drops the cached results
     wb.close()
 
     problems = compare(snapshot(view.path), snapshot(stale))
@@ -444,32 +486,35 @@ def test_gate_detects_an_unintended_value_change(synthetic_config, tmp_path):
     wb.save(tampered)
     wb.close()
 
-    problems = compare(
-        snapshot(view.path), snapshot(tampered), require_cached_values=False
-    )
+    problems = compare(snapshot(view.path), snapshot(tampered), require_cached_values=False)
     assert any("without being intended" in p for p in problems)
 
 
 def test_gate_passes_a_clean_write(synthetic_config):
     view = load_workbook_view(synthetic_config)
     out = write_enriched(
-        synthetic_config, view,
+        synthetic_config,
+        view,
         [change(2, "I", "general_email", "info@summitlodge.example")],
         run_id="test-013",
     )
     allowed = {("PARTNERS", c) for c in ("I2", "AK2", "AL2", "AM2")}
     allowed |= {key for key in snapshot(out).values if key[0] == "CHANGELOG"}
-    assert compare(
-        snapshot(view.path),
-        snapshot(out),
-        allowed_value_changes=allowed,
-        allowed_new_sheets={synthetic_config.workbook.changelog_detail_sheet},
-    ) == []
+    assert (
+        compare(
+            snapshot(view.path),
+            snapshot(out),
+            allowed_value_changes=allowed,
+            allowed_new_sheets={synthetic_config.workbook.changelog_detail_sheet},
+        )
+        == []
+    )
 
 
 # ---------------------------------------------------------------------------
 # Versioned output naming
 # ---------------------------------------------------------------------------
+
 
 def test_next_version_increments(synthetic_config):
     """The output version is the input's plus one -- never a folder scan."""
@@ -500,7 +545,8 @@ def test_output_version_needs_a_versioned_input(synthetic_config):
 def test_written_output_is_a_valid_xlsx(synthetic_config):
     view = load_workbook_view(synthetic_config)
     out = write_enriched(
-        synthetic_config, view,
+        synthetic_config,
+        view,
         [change(2, "P", "instagram_handle", "@summitlodgeverbier")],
         run_id="test-014",
     )
@@ -513,7 +559,8 @@ def test_written_output_is_a_valid_xlsx(synthetic_config):
 def test_no_staging_file_is_left_behind(synthetic_config):
     view = load_workbook_view(synthetic_config)
     write_enriched(
-        synthetic_config, view,
+        synthetic_config,
+        view,
         [change(2, "P", "instagram_handle", "@summitlodgeverbier")],
         run_id="test-015",
     )
@@ -547,8 +594,7 @@ def _add_parts(source, target, parts: dict[str, str]) -> None:
 
 def test_an_empty_drawing_may_be_dropped(synthetic_workbook, tmp_path):
     with_stub = tmp_path / "with_stub.xlsx"
-    _add_parts(synthetic_workbook, with_stub,
-               {"xl/drawings/drawing1.xml": _EMPTY_DRAWING})
+    _add_parts(synthetic_workbook, with_stub, {"xl/drawings/drawing1.xml": _EMPTY_DRAWING})
 
     before = snapshot(with_stub)
     assert before.drawing_anchor_counts["xl/drawings/drawing1.xml"] == 0
@@ -562,8 +608,7 @@ def test_an_empty_drawing_may_be_dropped(synthetic_workbook, tmp_path):
 def test_a_drawing_holding_an_object_may_not_be_dropped(synthetic_workbook, tmp_path):
     """The whitelist used to match on filename, which would have hidden this."""
     with_image = tmp_path / "with_image.xlsx"
-    _add_parts(synthetic_workbook, with_image,
-               {"xl/drawings/drawing1.xml": _DRAWING_WITH_AN_IMAGE})
+    _add_parts(synthetic_workbook, with_image, {"xl/drawings/drawing1.xml": _DRAWING_WITH_AN_IMAGE})
 
     before = snapshot(with_image)
     assert before.drawing_anchor_counts["xl/drawings/drawing1.xml"] == 1
@@ -581,20 +626,19 @@ def test_google_sheets_metadata_blob_is_benign(synthetic_workbook, tmp_path):
 
     without = tmp_path / "without.xlsx"
     shutil.copy2(synthetic_workbook, without)
-    problems = compare(snapshot(with_meta), snapshot(without),
-                       require_cached_values=False)
+    problems = compare(snapshot(with_meta), snapshot(without), require_cached_values=False)
     assert not any("metadata" in p for p in problems)
 
 
 def test_an_unknown_dropped_part_still_fails_the_gate(synthetic_workbook, tmp_path):
     with_extra = tmp_path / "with_extra.xlsx"
-    _add_parts(synthetic_workbook, with_extra,
-               {"xl/pivotCache/pivotCacheDefinition1.xml": "<pivot/>"})
+    _add_parts(
+        synthetic_workbook, with_extra, {"xl/pivotCache/pivotCacheDefinition1.xml": "<pivot/>"}
+    )
 
     without = tmp_path / "without.xlsx"
     shutil.copy2(synthetic_workbook, without)
-    problems = compare(snapshot(with_extra), snapshot(without),
-                       require_cached_values=False)
+    problems = compare(snapshot(with_extra), snapshot(without), require_cached_values=False)
     assert any("pivotCache" in p for p in problems)
 
 
@@ -607,9 +651,7 @@ def test_date_verified_comes_from_the_evidence_not_the_clock(synthetic_config):
     change_a.fetched_at = _dt(2026, 8, 23, 23, 55, 0)
 
     # The run is written on the 24th; the evidence was gathered on the 23rd.
-    provenance = build_provenance_changes(
-        [change_a], synthetic_config, view, run_date="2026-08-24"
-    )
+    provenance = build_provenance_changes([change_a], synthetic_config, view, run_date="2026-08-24")
     by_column = {p.column: p.new_value for p in provenance}
     assert by_column["AL"] == "2026-08-23", "should follow the fetch, not the write"
 
@@ -638,9 +680,7 @@ def test_an_unchanged_provenance_cell_is_not_rewritten(synthetic_config):
     same_day = change(2, "I", "general_email", "info@summitlodge.example")
     same_day.fetched_at = _dt(2026, 8, 21, 9, 0)
 
-    provenance = build_provenance_changes(
-        [same_day], synthetic_config, view, run_date="2026-08-21"
-    )
+    provenance = build_provenance_changes([same_day], synthetic_config, view, run_date="2026-08-21")
     assert "AL" not in {p.column for p in provenance}
     assert {"AK", "AM"} <= {p.column for p in provenance}
 
@@ -648,6 +688,7 @@ def test_an_unchanged_provenance_cell_is_not_rewritten(synthetic_config):
 # ---------------------------------------------------------------------------
 # Only the workbook goes to Drive; every process artifact stays local
 # ---------------------------------------------------------------------------
+
 
 def test_artifacts_and_workbook_have_separate_destinations(synthetic_config):
     assert synthetic_config.artifacts_directory != synthetic_config.output_directory
@@ -670,8 +711,15 @@ def test_write_outputs_puts_everything_in_one_local_directory(synthetic_config):
     view = load_workbook_view(synthetic_config)
     outcome = RunOutcome()
     summary = build_summary(
-        synthetic_config, view, outcome, run_id="test-artifacts", round_id="TEST",
-        started_at=_dt(2026, 8, 22, 9, 0), dry_run=True, selected=0, skipped={},
+        synthetic_config,
+        view,
+        outcome,
+        run_id="test-artifacts",
+        round_id="TEST",
+        started_at=_dt(2026, 8, 22, 9, 0),
+        dry_run=True,
+        selected=0,
+        skipped={},
     )
     written = write_outputs(synthetic_config.artifacts_directory, "stem", summary, outcome)
 
@@ -688,7 +736,8 @@ def test_write_outputs_puts_everything_in_one_local_directory(synthetic_config):
 def test_a_real_write_sends_only_the_xlsx_to_the_output_dir(synthetic_config):
     view = load_workbook_view(synthetic_config)
     written = write_enriched(
-        synthetic_config, view,
+        synthetic_config,
+        view,
         [change(2, "I", "general_email", "info@summitlodge.example")],
         run_id="test-split",
     )
@@ -701,8 +750,8 @@ def test_a_real_write_sends_only_the_xlsx_to_the_output_dir(synthetic_config):
 # Spreadsheet apps pad the used range; that is cosmetic
 # ---------------------------------------------------------------------------
 
-def test_trailing_empty_rows_do_not_fail_the_schema_check(synthetic_config,
-                                                          synthetic_workbook):
+
+def test_trailing_empty_rows_do_not_fail_the_schema_check(synthetic_config, synthetic_workbook):
     """A Google Sheets round trip left the real workbook reporting 1000 rows."""
     from efe.workbook.reader import last_data_row
 

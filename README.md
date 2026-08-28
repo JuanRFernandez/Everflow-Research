@@ -128,7 +128,10 @@ uv run efe verify --against ".../..._v03.xlsx" ".../..._v04.xlsx"
 |---|---|
 | `--dry-run` | Reports what *would* change. Writes no workbook. |
 | `--limit N` | Process at most N selected rows. |
-| `--rows A:B` | Restrict to worksheet rows A–B inclusive. |
+| `--rows A:B` | Restrict to worksheet rows A–B inclusive, or `--rows contacted` for every row already marked `Contacted = YES`. |
+| `--cols J,K,L,O` | Only propose these columns (letters or header names); naming a protected column is refused. Everything else found still reaches the review queue. |
+| `--only-empty` | States the rule the tool already follows: a filled cell is never overwritten. |
+| `--emit-paste` | Emit a paste block for the Sheet's panel and write no workbook. |
 | `--workbook PATH` | Read this file instead of the highest version in `workbook_dir`. |
 | `--reset-state` | Accept the chosen file as the new baseline even if it has fewer rows or a lower version than the last run recorded (`check`, `enrich`, `duplicates`). |
 | `--round NAME` | Round id, written to `Round`. Default `R2-enrich`. |
@@ -287,11 +290,38 @@ promotion cannot make true, it says: the DASHBOARD's cached totals in the output
 reflect the input version until Sheets recomputes them on open, and rows beyond
 the DASHBOARD's ranges (or the stale autofilter / dropdown ranges) are reported.
 
-**Never touches the CRM.** Columns Z–AJ (`Contacted` … `Next_Action`) are yours.
+**Ownership is per column, never per row.** `config.yaml` splits all 40 columns into
+five lists and **refuses to load if any column is missing from them or claimed
+twice** — that check exists because `Round` and `Priority_Score` once fell through
+the cracks, and a column nobody owns is a column anybody writes.
+
+| List | What it means |
+|---|---|
+| `identity_columns` (A–G) | only `promote` creates them, on a new row |
+| `research_columns` | the enricher may propose them, and only when the cell is empty |
+| `contact_columns` (M, N) | same, but a human value always wins — these are people |
+| `provenance_columns` (AK–AM) | stamped or appended on rows that gained a value |
+| `protected_columns` | never written or proposed by any tool, in any row |
+
+`Commission_or_Partner_Terms` is protected on purpose: a published commission found
+on a trade page is evidence for the review queue, never a value this tool puts in
+the sheet — the negotiated number is yours to type.
+
+**"Empty" is column-aware.** Besides `TBD` / `N/A` / `-` / `FORM-ONLY`, a column with
+a `value_patterns` regex counts anything that does not match as empty. A
+`Sales_B2B_Email` holding `Kai Schweigkofler — Travel Agency Support desk` is a
+person, not an address, so it is proposed again instead of being treated as filled
+forever. The old value always travels with the proposal.
+
+**Never touches the CRM.** Columns Z–AJ (`Contacted` … `Next_Action`), plus `U` and
+`AN`, are yours.
 `AC` / `Next_Follow_Up` is a live formula, preserved with its cached result.
 
-**The 18 gold rows** (`Contacted = YES`) are skipped entirely — not fetched, not
-written.
+**A contacted row is not a frozen row.** Until 2026-08-29 a row with
+`Contacted = YES` was skipped whole, so the moment a hotel was mailed the tool
+stopped filling its missing WhatsApp and LinkedIn — exactly when the row started to
+matter. Those rows are now enriched like any other, with their CRM columns protected
+by name; `--rows contacted` targets exactly them, because they are the live deals.
 
 **GDPR.** Role-based corporate addresses (`info@`, `sales@`) go to `General_Email` and
 `Sales_B2B_Email`. A named individual's address is *never* written to PARTNERS — it is
@@ -391,6 +421,34 @@ room), which print the hotel's own address and a labelled website link. IDs star
 EFE-0359 and `Round` is `R3-discovery`. Promotion is human: paste the rows you approve
 into the sheet (as `.xlsx`, not a native Sheet), download, and run `efe enrich` to
 fill contacts.
+
+## The deliverable is a paste block, not a file
+
+The Partner Database is a native Google Sheet now, so the tool stops emitting `vNN`
+files and starts emitting **proposals a human applies**:
+
+```bash
+uv run efe enrich --workbook <temporary export>.xlsx --reset-state     --emit-paste --rows contacted --cols J,K,L,O --only-empty
+```
+
+That writes `data/out/<date>_PASTE_<run>_paste.txt`, one line per cell, in the
+grammar the Sheet's panel reads:
+
+```
+# EFE-0264 Kempinski Hotel Das Tirol - row 262
+L262   +4353566705
+O262   https://www.linkedin.com/company/kempinski
+AK262 += ; https://kempinski.com/contact
+```
+
+A bare value sets the cell; `+=` appends (that is how `Source_URL` accumulates);
+`SHEET!REF = =FORMULA` writes a formula. Blank lines and `#` lines are ignored, so
+everything the run decided **not** to propose — held values, protected columns, the
+Sheets-side fixes — rides along as comments instead of living in a separate file.
+
+DASHBOARD formulas are deliberately not generated: the panel would accept them, but
+nothing here can synthesise a correct range, and a wrong formula pasted into a live
+total is worse than a note.
 
 ## Corrective releases: `efe fixup`
 

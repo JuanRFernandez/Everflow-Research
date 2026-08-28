@@ -209,22 +209,19 @@ def test_letters_are_derived_from_the_header_not_config(synthetic_config):
     assert spec.column_for("id") == "A"
     assert spec.column_for("general_email") == "I"
     assert spec.column_for("round") == "AM"
-    assert spec.writable_letters == ["I", "J", "K", "L", "M", "N", "O", "P", "U"]
+    # research first, then contact -- U is protected now, H and Q..X joined
+    assert spec.writable_letters == [
+        "H", "I", "J", "K", "L", "O", "P", "Q", "R", "S", "T", "V", "W", "X",
+        "M", "N",
+    ]  # fmt: skip
+    assert "U" in spec.protected_letters and "Y" in spec.protected_letters
     assert spec.provenance_letters == ["AK", "AL", "AM"]
-    assert spec.crm_letters == [
-        "Z",
-        "AA",
-        "AB",
-        "AC",
-        "AD",
-        "AE",
-        "AF",
-        "AG",
-        "AH",
-        "AI",
-        "AJ",
-        "AN",
-    ]
+    # `crm_letters` is the protected set now: the CRM block plus the two columns
+    # the brief left unowned -- Commission_or_Partner_Terms and Priority_Score.
+    assert spec.crm_letters == spec.protected_letters
+    assert spec.protected_letters == [
+        "U", "Y", "Z", "AA", "AB", "AC", "AD", "AE", "AF", "AG", "AH", "AI", "AJ", "AN",
+    ]  # fmt: skip
     assert spec.formula_letters == ["AC"]
     assert spec.header_of("AC") == "Next_Follow_Up"
     with pytest.raises(ValueError, match="not in the bound header"):
@@ -486,7 +483,7 @@ def test_values_that_look_like_formulas_are_refused(synthetic_config):
         write_enriched(
             synthetic_config,
             view,
-            [change(2, "U", "commission_terms", "=10% commission on net rates")],
+            [change(2, "X", "strategic_fit_note", "=10% commission on net rates")],
             run_id="test-formula",
         )
 

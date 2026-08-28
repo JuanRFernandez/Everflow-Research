@@ -27,36 +27,107 @@ from efe import config as config_mod
 FIXTURES = Path(__file__).parent / "fixtures"
 
 PARTNERS_HEADERS = [
-    "ID", "Entity_Name", "Category", "Subcategory", "Resort_Base", "Region_Valley",
-    "Country", "Website_URL", "General_Email", "Sales_B2B_Email", "Phone", "WhatsApp",
-    "Contact_Person_Name", "Contact_Person_Role", "LinkedIn_URL", "Instagram_Handle",
-    "Segment_Tier", "Star_Rating_or_Class", "Capacity_Keys_or_Beds",
-    "B2B_Program_Exists", "Commission_or_Partner_Terms", "Languages_Served",
-    "Owner_or_Group_Affiliation", "Strategic_Fit_Note", "Priority_Score", "Contacted",
-    "Contact_Date", "Follow_Up_Days", "Next_Follow_Up", "Email_Sent", "Call_Made",
-    "WhatsApp_Sent", "Meeting_Booked", "Agreement_Signed", "Status", "Next_Action",
-    "Source_URL", "Date_Verified", "Round", "Material_Sent",
+    "ID",
+    "Entity_Name",
+    "Category",
+    "Subcategory",
+    "Resort_Base",
+    "Region_Valley",
+    "Country",
+    "Website_URL",
+    "General_Email",
+    "Sales_B2B_Email",
+    "Phone",
+    "WhatsApp",
+    "Contact_Person_Name",
+    "Contact_Person_Role",
+    "LinkedIn_URL",
+    "Instagram_Handle",
+    "Segment_Tier",
+    "Star_Rating_or_Class",
+    "Capacity_Keys_or_Beds",
+    "B2B_Program_Exists",
+    "Commission_or_Partner_Terms",
+    "Languages_Served",
+    "Owner_or_Group_Affiliation",
+    "Strategic_Fit_Note",
+    "Priority_Score",
+    "Contacted",
+    "Contact_Date",
+    "Follow_Up_Days",
+    "Next_Follow_Up",
+    "Email_Sent",
+    "Call_Made",
+    "WhatsApp_Sent",
+    "Meeting_Booked",
+    "Agreement_Signed",
+    "Status",
+    "Next_Action",
+    "Source_URL",
+    "Date_Verified",
+    "Round",
+    "Material_Sent",
 ]
 
 #: (name, category, country, website, contacted, general_email, resort)
 #: Rows 5 and 6 deliberately share a domain, so the scope guard has a group case.
 SYNTHETIC_ROWS = [
-    ("Summit Lodge Verbier", "1. Hotels", "CH",
-     "https://summitlodge.example", "NO", "TBD", "Verbier"),
-    ("Berghotel Silberdistel", "1. Hotels", "DE",
-     "https://silberdistel-berghotel.example", "NO", "TBD", "Garmisch"),
-    ("Chalet Belle Etoile", "2. Chalets & Chalet Management", "FR",
-     "https://chalet-belle-etoile.example", "NO", "TBD", "Courchevel"),
-    ("W Verbier", "1. Hotels", "CH",
-     "https://grandclass.example", "NO", "TBD", "Verbier"),
-    ("Grandclass Courchevel", "1. Hotels", "FR",
-     "https://grandclass.example", "NO", "TBD", "Courchevel"),
-    ("Already Contacted Agency", "6. Distribution & Sales Agencies", "Brasil",
-     "https://contacted.example", "YES", "hello@contacted.example", ""),
-    ("Filled Row", "1. Hotels", "AT",
-     "https://filled.example", "NO", "info@filled.example", "Kitzbuehel"),
-    ("No Website Row", "10. Catering & Private Chefs", "FR",
-     "TBD", "NO", "TBD", ""),
+    (
+        "Summit Lodge Verbier",
+        "1. Hotels",
+        "CH",
+        "https://summitlodge.example",
+        "NO",
+        "TBD",
+        "Verbier",
+    ),
+    (
+        "Berghotel Silberdistel",
+        "1. Hotels",
+        "DE",
+        "https://silberdistel-berghotel.example",
+        "NO",
+        "TBD",
+        "Garmisch",
+    ),
+    (
+        "Chalet Belle Etoile",
+        "2. Chalets & Chalet Management",
+        "FR",
+        "https://chalet-belle-etoile.example",
+        "NO",
+        "TBD",
+        "Courchevel",
+    ),
+    ("W Verbier", "1. Hotels", "CH", "https://grandclass.example", "NO", "TBD", "Verbier"),
+    (
+        "Grandclass Courchevel",
+        "1. Hotels",
+        "FR",
+        "https://grandclass.example",
+        "NO",
+        "TBD",
+        "Courchevel",
+    ),
+    (
+        "Already Contacted Agency",
+        "6. Distribution & Sales Agencies",
+        "Brasil",
+        "https://contacted.example",
+        "YES",
+        "hello@contacted.example",
+        "",
+    ),
+    (
+        "Filled Row",
+        "1. Hotels",
+        "AT",
+        "https://filled.example",
+        "NO",
+        "info@filled.example",
+        "Kitzbuehel",
+    ),
+    ("No Website Row", "10. Catering & Private Chefs", "FR", "TBD", "NO", "TBD", ""),
 ]
 
 _CELL_RE = re.compile(r"<c\b([^>]*?)(/>|>((?:(?!</c>).)*?)</c>)", re.S)
@@ -150,8 +221,14 @@ def synthetic_workbook(tmp_path: Path) -> Path:
     partners.add_data_validation(_dv('"NO,YES"', "Z2:Z9"))
     partners.add_data_validation(_dv('"1,2,3,4,5"', "Y2:Y9"))
 
-    for name in ("RESORTS_SBI", "PRICING_BENCH", "REGULATORY", "_SOURCES",
-                 "_GAPS_ROUND2", "CHANGELOG"):
+    for name in (
+        "RESORTS_SBI",
+        "PRICING_BENCH",
+        "REGULATORY",
+        "_SOURCES",
+        "_GAPS_ROUND2",
+        "CHANGELOG",
+    ):
         wb.create_sheet(name)
 
     sources = wb["_SOURCES"]
@@ -177,10 +254,23 @@ def synthetic_workbook(tmp_path: Path) -> Path:
     detail = wb.create_sheet("CHANGELOG_DETAIL")
     for index, title in enumerate(CHANGELOG_DETAIL_HEADERS, start=1):
         detail.cell(1, index).value = title
-    prior = ["2026-08-21T10:00:00", "20260821-100000", 2, "EFE-0001", "Summit Lodge Verbier",
-             "K", "phone", "TBD", "+41 27 000 00 00", "high", "corporate_role",
-             "https://summitlodge.example/contact", "2026-08-21T09:59:00",
-             "phones.text", "prior run"]
+    prior = [
+        "2026-08-21T10:00:00",
+        "20260821-100000",
+        2,
+        "EFE-0001",
+        "Summit Lodge Verbier",
+        "K",
+        "phone",
+        "TBD",
+        "+41 27 000 00 00",
+        "high",
+        "corporate_role",
+        "https://summitlodge.example/contact",
+        "2026-08-21T09:59:00",
+        "phones.text",
+        "prior run",
+    ]
     for index, value in enumerate(prior, start=1):
         detail.cell(2, index).value = value
 

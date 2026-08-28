@@ -84,6 +84,7 @@ class FetchedPage:
 # Resume ledger
 # ---------------------------------------------------------------------------
 
+
 class RunLedger:
     """Append-only provenance ledger plus the resume marker."""
 
@@ -131,6 +132,7 @@ class RunLedger:
 # Enrichment
 # ---------------------------------------------------------------------------
 
+
 class Enricher:
     """Turns one `Candidate` into a set of `ExtractedValue`s with provenance."""
 
@@ -145,9 +147,7 @@ class Enricher:
             return []
         domain = urlparse(root).netloc
         seeds = [urljoin(root + "/", "sitemap.xml")]
-        policy = self.fetcher.robots.get(
-            domain[4:] if domain.startswith("www.") else domain
-        )
+        policy = self.fetcher.robots.get(domain[4:] if domain.startswith("www.") else domain)
         if policy is not None:
             seeds = list(dict.fromkeys(policy.sitemaps + seeds))
 
@@ -180,8 +180,9 @@ class Enricher:
 
         if home.ok and home.body:
             pages.append(self._wrap(candidate, candidate.website_url, home))
-            home_links = contact_links(home.body, home.final_url or candidate.website_url,
-                                       self.cfg.discovery)
+            home_links = contact_links(
+                home.body, home.final_url or candidate.website_url, self.cfg.discovery
+            )
         else:
             errors.append(f"homepage {candidate.website_url}: {home.error or home.status}")
 
@@ -329,8 +330,8 @@ class Enricher:
             # Contact forms: remembered per page; only becomes a value if the whole
             # site yields no email at all. A contact page beats the homepage.
             if page.kind in (PageKind.CONTACT, PageKind.HOME) and (
-                form_page is None or (page.kind is PageKind.CONTACT
-                                      and form_page.kind is PageKind.HOME)
+                form_page is None
+                or (page.kind is PageKind.CONTACT and form_page.kind is PageKind.HOME)
             ):
                 found = forms_mod.detect_contact_form(contact_body)
                 if found is not None:
@@ -344,8 +345,11 @@ class Enricher:
         return values
 
     def _form_only(
-        self, candidate: Candidate, values: list[ExtractedValue],
-        form_page: FetchedPage | None, form_find,
+        self,
+        candidate: Candidate,
+        values: list[ExtractedValue],
+        form_page: FetchedPage | None,
+        form_find,
     ) -> list[ExtractedValue]:
         """The FORM-ONLY sentinel: a real fact, never a guessed address.
 
@@ -359,8 +363,7 @@ class Enricher:
         if not self.cfg.confidence.form_only_when_no_email:
             return []
         if any(
-            v.field in (Field_.GENERAL_EMAIL, Field_.SALES_B2B_EMAIL) and v.writable
-            for v in values
+            v.field in (Field_.GENERAL_EMAIL, Field_.SALES_B2B_EMAIL) and v.writable for v in values
         ):
             return []
         existing = candidate.existing.get("general_email", "")
@@ -404,9 +407,7 @@ class Enricher:
                 if page.scope.verdict is not ScopeVerdict.SHARED_UNMATCHED
                 else Confidence.LOW
             )
-            confidence, note = self._email_confidence(
-                page, find.value, candidate.domain, base
-            )
+            confidence, note = self._email_confidence(page, find.value, candidate.domain, base)
             out.append(
                 ExtractedValue(
                     field=routing.field,
@@ -498,13 +499,17 @@ class Enricher:
         )
 
     def _emails(
-        self, candidate: Candidate, page: FetchedPage, body: str,
+        self,
+        candidate: Candidate,
+        page: FetchedPage,
+        body: str,
         chrome_stripped: bool = False,
     ) -> list[ExtractedValue]:
         out: list[ExtractedValue] = []
         chrome_note = (
             "; taken from the page body only, with the group header/nav/footer removed"
-            if chrome_stripped else ""
+            if chrome_stripped
+            else ""
         )
         for find in emails_mod.extract_emails(body, self.cfg.email):
             routing = classify_mod.classify_email(
@@ -515,9 +520,7 @@ class Enricher:
                 continue
 
             base = self._confidence(page, field=routing.field, method=find.method)
-            confidence, note = self._email_confidence(
-                page, find.value, candidate.domain, base
-            )
+            confidence, note = self._email_confidence(page, find.value, candidate.domain, base)
             reason = routing.reason + note
             out.append(
                 ExtractedValue(
@@ -528,20 +531,21 @@ class Enricher:
                     evidence=self._evidence(page, find),
                     extractor=f"emails.{find.method}",
                     reason=f"{reason}; found via {find.method} on a "
-                           f"{page.kind.value} page{chrome_note}",
+                    f"{page.kind.value} page{chrome_note}",
                     scope=page.scope.verdict,
                 )
             )
         return out
 
     def _phones(
-        self, page: FetchedPage, body: str, region: str | None,
+        self,
+        page: FetchedPage,
+        body: str,
+        region: str | None,
         chrome_stripped: bool = False,
     ) -> list[ExtractedValue]:
         out: list[ExtractedValue] = []
-        chrome_note = (
-            "; page body only, group header/nav/footer removed" if chrome_stripped else ""
-        )
+        chrome_note = "; page body only, group header/nav/footer removed" if chrome_stripped else ""
         for find in phones_mod.extract_phones(body, region, self.cfg.phone):
             out.append(
                 ExtractedValue(
@@ -578,7 +582,11 @@ class Enricher:
         return out
 
     def _social_confidence(
-        self, candidate: Candidate, page: FetchedPage, field_name: Field_, handle: str,
+        self,
+        candidate: Candidate,
+        page: FetchedPage,
+        field_name: Field_,
+        handle: str,
         method: str,
     ) -> tuple[Confidence, str]:
         """On a group domain, the handle itself must name the entity.
@@ -602,9 +610,7 @@ class Enricher:
             "this entity, so it may belong to a sibling property -- held for review"
         )
 
-    def _socials(
-        self, candidate: Candidate, page: FetchedPage, body: str
-    ) -> list[ExtractedValue]:
+    def _socials(self, candidate: Candidate, page: FetchedPage, body: str) -> list[ExtractedValue]:
         out: list[ExtractedValue] = []
         for find in social_mod.extract_linkedin(body, self.cfg.social):
             if find.extra.get("personal_profile"):
@@ -645,9 +651,7 @@ class Enricher:
     #: Page kinds a named individual may be extracted from generically. LEGAL is
     #: excluded on purpose: `Proprietaire` on a mentions-legales page names the
     #: owning company, not a person, and produced `Leaders Club / Proprietaire`.
-    PERSON_PAGE_KINDS = frozenset(
-        {PageKind.CONTACT, PageKind.TEAM, PageKind.ABOUT, PageKind.HOME}
-    )
+    PERSON_PAGE_KINDS = frozenset({PageKind.CONTACT, PageKind.TEAM, PageKind.ABOUT, PageKind.HOME})
 
     def _persons(self, page: FetchedPage, body: str) -> list[ExtractedValue]:
         if page.kind is PageKind.IMPRESSUM:
@@ -749,6 +753,7 @@ def identity_text(html_body: str) -> str:
 # Choosing what to write
 # ---------------------------------------------------------------------------
 
+
 def _sort_key(value: ExtractedValue) -> tuple:
     """Best candidate first: confidence, then page kind, then extraction method."""
     kind_rank = {
@@ -760,19 +765,36 @@ def _sort_key(value: ExtractedValue) -> tuple:
         PageKind.ABOUT: 5,
         PageKind.HOME: 6,
     }.get(value.evidence.page_kind, 9)
-    method_rank = 0 if any(
-        marker in value.extractor for marker in ("mailto", "tel-href", "impressum", "wa-link")
-    ) else 1
+    method_rank = (
+        0
+        if any(
+            marker in value.extractor for marker in ("mailto", "tel-href", "impressum", "wa-link")
+        )
+        else 1
+    )
     return (-value.confidence.rank, kind_rank, method_rank, len(value.value))
 
 
 def choose_values(
-    candidate: Candidate, values: list[ExtractedValue], cfg: Config
-) -> tuple[dict[Field_, ExtractedValue], list[ExtractedValue], int]:
+    candidate: Candidate,
+    values: list[ExtractedValue],
+    cfg: Config,
+    *,
+    columns: set[str] | None = None,
+) -> tuple[dict[Field_, ExtractedValue], list[tuple[ExtractedValue, str]], int]:
     """Split candidates into one winner per empty field, and everything held back.
 
-    A field that already holds a real value in the workbook is never contested: all
-    of its candidates go to the review queue instead.
+    Two things stop a value here, and both are per column, never per row:
+
+    * the column is **protected** -- `Commission_or_Partner_Terms` and the CRM block
+      are Juan's, so a value found for one is evidence for the review queue and
+      nothing else;
+    * the cell already holds a real value. "Real" is column-aware: a
+      `Sales_B2B_Email` holding a person's name is not an address, so it counts as
+      empty and may be proposed.
+
+    `columns` restricts the run to a set of column letters (`--cols`). Everything
+    held carries the reason it was held, so the queue never reads as a rejection.
 
     The same value is usually found on several pages -- a group site repeats every
     property's phone number in its footer -- so candidates are deduplicated by value
@@ -786,9 +808,10 @@ def choose_values(
         by_field.setdefault(value.field, []).append(value)
 
     chosen: dict[Field_, ExtractedValue] = {}
-    held: list[ExtractedValue] = []
+    held: list[tuple[ExtractedValue, str]] = []
     dropped = 0
     cap = cfg.review.max_alternates_per_field
+    protected = set(spec.protected_columns)
 
     for field_name, group in by_field.items():
         group.sort(key=_sort_key)
@@ -801,17 +824,24 @@ def choose_values(
         group = list(unique.values())
 
         column_key = FIELD_TO_COLUMN_KEY[field_name]
+        column_name = spec.columns[column_key]
         current = candidate.existing.get(column_key, "")
-        cell_free = spec.is_empty(current)
+        cell_free = spec.is_empty(current, column_name)
+
+        blocked = ""
+        if column_name in protected:
+            blocked = f"{column_name} is a protected column - never written by any tool"
+        elif columns is not None and spec.letter_of(column_name) not in columns:
+            blocked = f"{column_name} is outside the columns this run was asked for"
 
         winner_taken = False
         kept_alternates = 0
         for value in group:
-            if cell_free and not winner_taken and value.writable:
+            if not blocked and cell_free and not winner_taken and value.writable:
                 chosen[field_name] = value
                 winner_taken = True
             elif kept_alternates < cap:
-                held.append(value)
+                held.append((value, blocked))
                 kept_alternates += 1
             else:
                 dropped += 1
@@ -820,33 +850,40 @@ def choose_values(
     name = chosen.get(Field_.CONTACT_PERSON_NAME)
     role = chosen.get(Field_.CONTACT_PERSON_ROLE)
     if name and not role:
-        held.append(chosen.pop(Field_.CONTACT_PERSON_NAME))
+        held.append((chosen.pop(Field_.CONTACT_PERSON_NAME), ""))
     elif role and not name:
-        held.append(chosen.pop(Field_.CONTACT_PERSON_ROLE))
+        held.append((chosen.pop(Field_.CONTACT_PERSON_ROLE), ""))
     elif name and role and name.evidence.source_url != role.evidence.source_url:
-        held.append(chosen.pop(Field_.CONTACT_PERSON_ROLE))
-        held.append(chosen.pop(Field_.CONTACT_PERSON_NAME))
+        held.append((chosen.pop(Field_.CONTACT_PERSON_ROLE), ""))
+        held.append((chosen.pop(Field_.CONTACT_PERSON_NAME), ""))
 
     return chosen, held, dropped
 
 
 def to_cell_change(
-    candidate: Candidate, field_name: Field_, value: ExtractedValue, cfg: Config,
-    *, written: bool
+    candidate: Candidate,
+    field_name: Field_,
+    value: ExtractedValue,
+    cfg: Config,
+    *,
+    written: bool,
+    held_reason: str = "",
 ) -> CellChange:
     column_key = FIELD_TO_COLUMN_KEY[field_name]
+    column_name = cfg.workbook.columns[column_key]
     current = candidate.existing.get(column_key, "")
     if written:
         note = value.reason
     else:
-        # A writable value can still be held: the cell was already filled (by a
-        # human, typically), or another value won it. Say which, so the review
-        # queue does not read as a list of rejections.
-        why = value.held_back_reason
+        # A writable value can still be held: the column is protected or out of
+        # scope for the run, the cell was already filled (by a human, typically),
+        # or another value won it. Say which, so the review queue does not read as
+        # a list of rejections.
+        why = held_reason or value.held_back_reason
         if not why:
             why = (
                 f"cell already holds {current!r} - kept as an alternate, never overwritten"
-                if not cfg.workbook.is_empty(current)
+                if not cfg.workbook.is_empty(current, column_name)
                 else "not chosen: another value won this cell, or name and role came "
                 "from different pages"
             )
@@ -871,7 +908,7 @@ def to_cell_change(
 def to_ledger_records(
     candidate: Candidate,
     chosen: dict[Field_, ExtractedValue],
-    held: list[ExtractedValue],
+    held: list[tuple[ExtractedValue, str]],
     round_id: str,
     run_id: str,
 ) -> list[LedgerRecord]:
@@ -896,7 +933,7 @@ def to_ledger_records(
                 run_id=run_id,
             )
         )
-    for value in held:
+    for value, reason in held:
         records.append(
             LedgerRecord(
                 entity_id=candidate.entity_id,
@@ -908,7 +945,9 @@ def to_ledger_records(
                 round_id=round_id,
                 data_class=value.data_class.value,
                 written=False,
-                held_back_reason=value.held_back_reason or "not the best candidate for the cell",
+                held_back_reason=(
+                    reason or value.held_back_reason or "not the best candidate for the cell"
+                ),
                 reason=value.reason,
                 extractor=value.extractor,
                 matched_text=value.evidence.matched_text[:300],
@@ -922,6 +961,7 @@ def to_ledger_records(
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class RunOutcome:
@@ -947,6 +987,7 @@ async def run_enrichment(
     ledger: RunLedger | None = None,
     on_progress=None,
     fetcher: Fetcher | None = None,
+    columns: set[str] | None = None,
 ) -> RunOutcome:
     """Fetch, extract and decide for every candidate. Writes nothing to the workbook.
 
@@ -957,8 +998,8 @@ async def run_enrichment(
     """
     guard = ScopeGuard(cfg.scope, view.domain_row_counts, view.domain_resorts)
     cfg.cache_directory.mkdir(parents=True, exist_ok=True)
-    cache = fetcher.cache if fetcher is not None else PageCache(
-        cfg.cache_directory, enabled=use_cache
+    cache = (
+        fetcher.cache if fetcher is not None else PageCache(cfg.cache_directory, enabled=use_cache)
     )
 
     outcome = RunOutcome()
@@ -1004,15 +1045,15 @@ async def run_enrichment(
                     # domain-level reason stays as it is: mixing the two made the
                     # report contradict itself.
                     result.pages_matched = sum(
-                        1 for p in pages
-                        if p.scope.verdict is not ScopeVerdict.SHARED_UNMATCHED
+                        1 for p in pages if p.scope.verdict is not ScopeVerdict.SHARED_UNMATCHED
                     )
                     result.pages_unmatched = len(pages) - result.pages_matched
                 if pages:
                     result.scope_verdict = min(
                         (p.scope.verdict for p in pages),
-                        key=lambda v: {"own_domain": 0, "shared_matched": 1,
-                                       "shared_unmatched": 2}[v.value],
+                        key=lambda v: {"own_domain": 0, "shared_matched": 1, "shared_unmatched": 2}[
+                            v.value
+                        ],
                     )
                 result.values = enricher.extract(candidate, pages)
                 result.finished_at = datetime.now()
@@ -1029,22 +1070,20 @@ async def run_enrichment(
         async def one_and_record(candidate: Candidate) -> None:
             nonlocal finished
             result = await one(candidate)
-            chosen, held, dropped = choose_values(candidate, result.values, cfg)
+            chosen, held, dropped = choose_values(candidate, result.values, cfg, columns=columns)
             async with lock:
                 finished += 1
                 outcome.alternates_dropped += dropped
                 outcome.results.append(result)
                 outcome.changes += [
-                    to_cell_change(candidate, f, v, cfg, written=True)
-                    for f, v in chosen.items()
+                    to_cell_change(candidate, f, v, cfg, written=True) for f, v in chosen.items()
                 ]
                 outcome.held += [
-                    to_cell_change(candidate, v.field, v, cfg, written=False) for v in held
+                    to_cell_change(candidate, v.field, v, cfg, written=False, held_reason=reason)
+                    for v, reason in held
                 ]
                 if ledger:
-                    ledger.append(
-                        to_ledger_records(candidate, chosen, held, round_id, run_id)
-                    )
+                    ledger.append(to_ledger_records(candidate, chosen, held, round_id, run_id))
                     done.add(candidate.entity_id)
                     ledger.mark_complete(done, last_row=candidate.row)
                 if on_progress:

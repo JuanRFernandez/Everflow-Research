@@ -284,9 +284,14 @@ def formula_gaps(ws, spec, last_row: int) -> dict[str, list[int]]:
 
 
 def human_verified_rows(ws, spec, cfg: Config, last_row: int) -> set[int]:
-    """Rows the `selection.skip_when` rules mark as human-verified (Contacted = YES)."""
+    """Rows allowed to hold a typed value where a formula belongs (Contacted = YES).
+
+    Schema-check only. This used to share its rule with the enricher's row-level
+    skip, which is why contacting a partner froze the whole row; the two questions
+    are now separate and only this one is still about rows.
+    """
     gold: set[int] = set()
-    for rule in cfg.selection.skip_when:
+    for rule in spec.formula_override_when:
         col = column_index_from_string(spec.letter_of(rule.column))
         wanted = {v.strip().upper() for v in rule.values}
         for r in range(spec.first_data_row, last_row + 1):
@@ -826,22 +831,8 @@ def select_candidates(view: WorkbookView, cfg: Config) -> tuple[list[Candidate],
     website_col = spec.column_for("website_url")
     name_col = spec.column_for("entity_name")
     id_col = spec.column_for("id")
-    skip_rules = [(rule, spec.letter_of(rule.column)) for rule in cfg.selection.skip_when]
 
     for pr in view.rows:
-        skip_reason = ""
-        for rule, letter in skip_rules:
-            current = pr.get(letter).upper()
-            if current in {v.upper() for v in rule.values}:
-                skip_reason = (
-                    f"human-verified row ({rule.column}={pr.get(letter)!r}) "
-                    "- never fetched, never written"
-                )
-                break
-        if skip_reason:
-            skipped[pr.row] = skip_reason
-            continue
-
         website = pr.get(website_col)
         domain = domain_of(website)
         if cfg.selection.require_website and not domain:
@@ -870,7 +861,7 @@ def select_candidates(view: WorkbookView, cfg: Config) -> tuple[list[Candidate],
                 continue
 
         existing = {f: pr.logical(cfg, f) for f in ENRICHABLE_FIELDS}
-        if all(not spec.is_empty(v) for v in existing.values()):
+        if all(not spec.is_empty(v, spec.columns[f]) for f, v in existing.items()):
             skipped[pr.row] = "every enrichable field is already filled"
             continue
 

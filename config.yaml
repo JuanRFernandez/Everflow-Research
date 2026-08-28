@@ -71,6 +71,13 @@ workbook:
   # address found later can replace it.
   empty_tokens: ["", "TBD", "N/A", "-", "FORM-ONLY"]
 
+  # A cell must match its column's pattern to count as holding a real value.
+  # `Sales_B2B_Email` holding "Kai Schweigkofler - Travel Agency Support desk" is a
+  # person, not an address: it counts as empty and may be proposed again.
+  value_patterns:
+    General_Email:   "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z]{2,}"
+    Sales_B2B_Email: "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z]{2,}"
+
   # Logical field -> header name. The code never sees a letter.
   columns:
     id:                  ID
@@ -99,22 +106,41 @@ workbook:
     date_verified:       Date_Verified
     round:               Round
 
-  # The only columns the enricher may ever write.
-  writable_columns:
-    [General_Email, Sales_B2B_Email, Phone, WhatsApp, Contact_Person_Name,
-     Contact_Person_Role, LinkedIn_URL, Instagram_Handle, Commission_or_Partner_Terms]
-  # Provenance columns: written only on rows where >=1 writable column changed.
+  # ---- Ownership. Every column belongs to exactly one list, and the config
+  # ---- refuses to load if one is missing or claimed twice. Ownership is per
+  # ---- COLUMN, never per row: contacting a partner makes that row important,
+  # ---- it does not freeze it.
+
+  # Only `promote` creates these, on a brand-new row.
+  identity_columns:
+    [ID, Entity_Name, Category, Subcategory, Resort_Base, Region_Valley, Country]
+  # The enricher may propose these, and only when the cell is empty.
+  research_columns:
+    [Website_URL, General_Email, Sales_B2B_Email, Phone, WhatsApp, LinkedIn_URL,
+     Instagram_Handle, Segment_Tier, Star_Rating_or_Class, Capacity_Keys_or_Beds,
+     B2B_Program_Exists, Languages_Served, Owner_or_Group_Affiliation,
+     Strategic_Fit_Note]
+  # Same rule, but a human value always wins: these are people.
+  contact_columns: [Contact_Person_Name, Contact_Person_Role]
+  # Stamped or appended on rows that gained a value -- NOT "only if empty":
+  # Source_URL accumulates, Date_Verified and Round are re-stamped.
   provenance_columns: [Source_URL, Date_Verified, Round]
-  # Human-owned CRM columns. Writing to any of these is a hard error.
-  crm_columns:
-    [Contacted, Contact_Date, Follow_Up_Days, Next_Follow_Up, Email_Sent, Call_Made,
-     WhatsApp_Sent, Meeting_Booked, Agreement_Signed, Status, Next_Action,
-     Material_Sent]
-  # Live formulas: must hold a formula on every data row; never touched. A
-  # human-verified row (selection.skip_when, i.e. Contacted = YES) may carry a
-  # typed value instead -- those rows are the human's end to end -- and `efe
-  # check` lists them.
+  # Never written or proposed by any tool, in any row. Juan's, end to end.
+  # Commission_or_Partner_Terms is here on purpose: a negotiated commission (the
+  # Schlosshotel 10-15%) is his to type, not ours to guess. Priority_Score is here
+  # because the DASHBOARD counts it.
+  protected_columns:
+    [Commission_or_Partner_Terms, Priority_Score, Contacted, Contact_Date,
+     Follow_Up_Days, Next_Follow_Up, Email_Sent, Call_Made, WhatsApp_Sent,
+     Meeting_Booked, Agreement_Signed, Status, Next_Action, Material_Sent]
+  # Live formulas: must hold a formula on every data row; never touched.
   formula_columns: [Next_Follow_Up]
+  # Rows allowed to hold a typed value in a formula column instead of the formula.
+  # SCHEMA CHECK ONLY -- it grants no exemption from enrichment. The nine rows that
+  # carry a hand-typed 2026-09-08 follow-up date live here.
+  formula_override_when:
+    - column: "Contacted"
+      values: ["YES"]
   # Columns that feed live formulas (DASHBOARD COUNTIFs over PARTNERS, and
   # Next_Follow_Up = Contact_Date + Follow_Up_Days). The writer preserves cached
   # formula results, so writing any of these would leave a stale result behind.
@@ -125,11 +151,9 @@ workbook:
 # Row selection
 # ----------------------------------------------------------------------------
 selection:
-  # Rows where this column holds one of these values are skipped entirely
-  # (no fetch, no write). These are the human-verified "gold" rows.
-  skip_when:
-    - column: "Contacted"
-      values: ["YES"]
+  # There is no row-level skip. A row with Contacted = YES is a live deal, not a
+  # frozen record: its CRM columns are protected by name, and everything the
+  # enricher may fill it still fills. `--rows contacted` targets exactly those.
   require_website: true
   round_tag: "R3-hotels"   # written to AM on changed rows
 

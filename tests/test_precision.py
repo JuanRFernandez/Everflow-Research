@@ -25,6 +25,7 @@ def names(finds):
 # Persons: nothing from cookie banners, legal boilerplate or navigation
 # ---------------------------------------------------------------------------
 
+
 def test_no_person_is_extracted_from_boilerplate():
     """`Accept All / coo`, `French Data Protection Act / cco`, `Villars Palace / socia`."""
     assert extract_persons(fixture_text("person_false_positives.html")) == []
@@ -51,8 +52,14 @@ def test_boilerplate_is_not_a_name(phrase):
 
 @pytest.mark.parametrize(
     "phrase",
-    ["Elena Vargas", "Thomas Brunner", "Katharina Meier", "Jean-Luc Martin",
-     "Ana de Souza", "Nils Aaberg"],
+    [
+        "Elena Vargas",
+        "Thomas Brunner",
+        "Katharina Meier",
+        "Jean-Luc Martin",
+        "Ana de Souza",
+        "Nils Aaberg",
+    ],
 )
 def test_real_names_still_pass(phrase):
     assert looks_like_name(phrase) is True
@@ -67,9 +74,7 @@ def test_acronym_roles_are_case_sensitive_and_whole_words():
     )
     assert extract_persons(body) == []
 
-    real = (
-        "<html><body><div><h3>Anna Keller</h3><p>COO</p></div></body></html>"
-    )
+    real = "<html><body><div><h3>Anna Keller</h3><p>COO</p></div></body></html>"
     finds = extract_persons(real)
     assert names(finds) == {"Anna Keller"}
     assert finds[0].extra["role"] == "COO"
@@ -79,12 +84,12 @@ def test_the_three_supported_shapes_all_work():
     finds = extract_persons(fixture_text("person_true_positives.html"))
     pairs = {f.value: f.extra["role"] for f in finds}
 
-    assert pairs["Elena Vargas"] == "Director of Sales"       # adjacent elements
-    assert pairs["Thomas Brunner"] == "General Manager"       # adjacent elements
+    assert pairs["Elena Vargas"] == "Director of Sales"  # adjacent elements
+    assert pairs["Thomas Brunner"] == "General Manager"  # adjacent elements
     assert pairs["Sophie Laurent"] == "Reservations Manager"  # <br>-separated lines
-    assert pairs["Katharina Meier"] == "Geschaeftsfuehrer"    # labelled line
-    assert pairs["Marco Ricci"] == "Revenue Manager"          # separated line, dash
-    assert pairs["Lukas Berger"] == "Marketing Manager"       # separated line, comma
+    assert pairs["Katharina Meier"] == "Geschaeftsfuehrer"  # labelled line
+    assert pairs["Marco Ricci"] == "Revenue Manager"  # separated line, dash
+    assert pairs["Lukas Berger"] == "Marketing Manager"  # separated line, comma
 
 
 def test_a_name_with_a_non_role_is_still_discarded():
@@ -102,17 +107,20 @@ def test_a_role_never_leaks_into_the_name():
 # Socials on a group domain must name the entity
 # ---------------------------------------------------------------------------
 
+
 def test_group_footer_links_every_sibling_property(real_config):
     """The extractor finds them all; deciding which is ours is the scope guard's job."""
-    handles = {f.value for f in extract_instagram(
-        fixture_text("group_footer_socials.html"), real_config.social
-    )}
+    handles = {
+        f.value
+        for f in extract_instagram(fixture_text("group_footer_socials.html"), real_config.social)
+    }
     assert handles == {"@grandclassvenice", "@grandclassgordes", "@grandclassvaldisere"}
 
 
 # ---------------------------------------------------------------------------
 # The resort fallback must actually distinguish
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def barriere_guard(real_config):
@@ -175,8 +183,13 @@ def test_resort_is_distinctive_helper(barriere_guard):
 
 def test_a_loyalty_programme_is_not_a_person():
     """`Leaders Club / Propriétaire` came off a mentions-légales page."""
-    for phrase in ("Leaders Club", "Preferred Hotels", "Virtuoso Network",
-                   "Relais Chateaux", "Signature Travel"):
+    for phrase in (
+        "Leaders Club",
+        "Preferred Hotels",
+        "Virtuoso Network",
+        "Relais Chateaux",
+        "Signature Travel",
+    ):
         assert looks_like_name(phrase) is False
 
 
@@ -190,16 +203,18 @@ def test_persons_are_not_taken_from_legal_pages(real_config, tmp_path):
     from efe.models import PageKind
     from efe.pipeline import Enricher, FetchedPage
 
-    body = (
-        "<html><body><div><h3>Anna Keller</h3><p>Propriétaire</p></div></body></html>"
-    )
+    body = "<html><body><div><h3>Anna Keller</h3><p>Propriétaire</p></div></body></html>"
     page_at = lambda kind: FetchedPage(  # noqa: E731
         url="https://x.example/mentions-legales",
         kind=kind,
-        page=CachedPage(url="https://x.example/mentions-legales",
-                        final_url="https://x.example/mentions-legales", status=200,
-                        body=body, fetched_at=datetime(2026, 8, 21),
-                        headers={"content-type": "text/html"}),
+        page=CachedPage(
+            url="https://x.example/mentions-legales",
+            final_url="https://x.example/mentions-legales",
+            status=200,
+            body=body,
+            fetched_at=datetime(2026, 8, 21),
+            headers={"content-type": "text/html"},
+        ),
         scope=ScopeDecision(verdict=ScopeVerdict.OWN_DOMAIN, reason="own"),
     )
     enricher = Enricher(
@@ -215,17 +230,18 @@ def test_persons_are_not_taken_from_legal_pages(real_config, tmp_path):
 # Retina image references are not email addresses
 # ---------------------------------------------------------------------------
 
+
 def test_srcset_assets_are_not_extracted_as_emails(real_config):
     """`angela@2x.jpg` and friends came out of a srcset on a real lift-company site."""
     from efe.extract.emails import extract_emails
 
     body = (
-        '<html><body>'
+        "<html><body>"
         '<img srcset="/img/angela@2x.jpg 2x, /img/angela@3x.webp 3x" src="/img/a.jpg">'
         '<img srcset="/img/clouds-center@2x.png 2x, /img/sally%20kim@2x.png 2x">'
-        '<p>media--92aa2fb2--query@2x.webp</p>'
+        "<p>media--92aa2fb2--query@2x.webp</p>"
         '<p>Write to <a href="mailto:info@matterhornparadise.example">us</a></p>'
-        '</body></html>'
+        "</body></html>"
     )
     found = {f.value for f in extract_emails(body, real_config.email)}
     assert found == {"info@matterhornparadise.example"}
@@ -235,14 +251,18 @@ def test_srcset_assets_are_not_extracted_as_emails(real_config):
 # Trade-page detection matches path segments, not substrings
 # ---------------------------------------------------------------------------
 
+
 def test_provision_types_is_not_a_trade_page(real_config):
     """`pro` inside `provision-types` made a page about packed lunches a trade page."""
     from efe.extract.terms import is_trade_page
 
-    assert is_trade_page(
-        "https://x.example/travel-service/typically-tirolean/provision-types",
-        real_config.terms,
-    ) is False
+    assert (
+        is_trade_page(
+            "https://x.example/travel-service/typically-tirolean/provision-types",
+            real_config.terms,
+        )
+        is False
+    )
     assert is_trade_page("https://x.example/promotions", real_config.terms) is False
     assert is_trade_page("https://x.example/products", real_config.terms) is False
 
@@ -274,6 +294,7 @@ def test_english_provisions_is_not_a_commission_signal(real_config):
 # Duplicate detection: accent-insensitive, and blind to business units
 # ---------------------------------------------------------------------------
 
+
 def _pairs(names_domains, real_config):
     """Build a throwaway WorkbookView from (row, name, domain) triples."""
     from efe.dedupe import find_duplicates
@@ -282,84 +303,124 @@ def _pairs(names_domains, real_config):
     spec = real_config.workbook
     rows = []
     for row, name, domain in names_domains:
-        cells = {spec.column_for("entity_name"): name,
-                 spec.column_for("website_url"): f"https://{domain}" if domain else "TBD"}
+        cells = {
+            spec.column_for("entity_name"): name,
+            spec.column_for("website_url"): f"https://{domain}" if domain else "TBD",
+        }
         rows.append(PartnerRow(row=row, cells=cells))
-    view = WorkbookView(path=__import__("pathlib").Path("x.xlsx"), rows=rows,
-                        formula_count=0, header_letters={})
+    view = WorkbookView(
+        path=__import__("pathlib").Path("x.xlsx"), rows=rows, formula_count=0, header_letters={}
+    )
     return {(p.row_a, p.row_b) for p in find_duplicates(view, real_config)}
 
 
 def test_accent_variants_are_detected(real_config):
-    found = _pairs([
-        (1, "Matuete", "matuete.com"),
-        (2, "Matueté", "matuete.com"),
-        (3, "Julia Tours Mexico", "juliatours.com.mx"),
-        (4, "Juliá Tours México", "juliatours.com.mx"),
-        (5, "Viajes Bojorquez (Matriz)", "viajesbojorquez.com"),
-        (6, "Viajes Bojórquez (Matriz)", "viajesbojorquez.com"),
-    ], real_config)
+    found = _pairs(
+        [
+            (1, "Matuete", "matuete.com"),
+            (2, "Matueté", "matuete.com"),
+            (3, "Julia Tours Mexico", "juliatours.com.mx"),
+            (4, "Juliá Tours México", "juliatours.com.mx"),
+            (5, "Viajes Bojorquez (Matriz)", "viajesbojorquez.com"),
+            (6, "Viajes Bojórquez (Matriz)", "viajesbojorquez.com"),
+        ],
+        real_config,
+    )
     assert found == {(1, 2), (3, 4), (5, 6)}
 
 
 def test_word_order_and_repetition_do_not_hide_a_duplicate(real_config):
-    found = _pairs([
-        (1, "NUBA Travel", "nuba.com"),
-        (2, "NUBA (Nuba Travel)", "nuba.com"),
-        (3, "TM Travel Tailor Made", "tmtravel.com.br"),
-        (4, "TM Travel Tailor Made Travel", "tmtravel.com.br"),
-    ], real_config)
+    found = _pairs(
+        [
+            (1, "NUBA Travel", "nuba.com"),
+            (2, "NUBA (Nuba Travel)", "nuba.com"),
+            (3, "TM Travel Tailor Made", "tmtravel.com.br"),
+            (4, "TM Travel Tailor Made Travel", "tmtravel.com.br"),
+        ],
+        real_config,
+    )
     assert found == {(1, 2), (3, 4)}
 
 
 def test_an_expanded_name_on_the_same_domain_is_a_duplicate(real_config):
-    assert _pairs([
-        (1, "TTW Group (Travel Trend Worldwide)", "ttwgroup.com"),
-        (2, "TTW Group", "ttwgroup.com"),
-    ], real_config) == {(1, 2)}
+    assert _pairs(
+        [
+            (1, "TTW Group (Travel Trend Worldwide)", "ttwgroup.com"),
+            (2, "TTW Group", "ttwgroup.com"),
+        ],
+        real_config,
+    ) == {(1, 2)}
 
 
 def test_business_units_are_never_flagged(real_config):
     """Different divisions have different contacts. Merging them destroys both."""
-    assert _pairs([
-        (1, "Air Zermatt", "air-zermatt.ch"),
-        (2, "Air Zermatt (heli-ski division)", "air-zermatt.ch"),
-        (3, "Cimalpes", "cimalpes.com"),
-        (4, "Cimalpes (apartments division)", "cimalpes.com"),
-        (5, "Scott Dunn", "scottdunn.com"),
-        (6, "Scott Dunn (chalet division)", "scottdunn.com"),
-        (7, "Scott Dunn Kids Clubs / Childcare", "scottdunn.com"),
-        (8, "Powder Byrne", "powderbyrne.com"),
-        (9, "Powder Byrne MICE", "powderbyrne.com"),
-        (10, "Heli Bernina", "helibernina.ch"),
-        (11, "Heli Bernina (heli-ski)", "helibernina.ch"),
-        (12, "Six Senses Residences Courchevel", "sixsenses.com"),
-        (13, "Six Senses Crans-Montana", "sixsenses.com"),
-    ], real_config) == set()
+    assert (
+        _pairs(
+            [
+                (1, "Air Zermatt", "air-zermatt.ch"),
+                (2, "Air Zermatt (heli-ski division)", "air-zermatt.ch"),
+                (3, "Cimalpes", "cimalpes.com"),
+                (4, "Cimalpes (apartments division)", "cimalpes.com"),
+                (5, "Scott Dunn", "scottdunn.com"),
+                (6, "Scott Dunn (chalet division)", "scottdunn.com"),
+                (7, "Scott Dunn Kids Clubs / Childcare", "scottdunn.com"),
+                (8, "Powder Byrne", "powderbyrne.com"),
+                (9, "Powder Byrne MICE", "powderbyrne.com"),
+                (10, "Heli Bernina", "helibernina.ch"),
+                (11, "Heli Bernina (heli-ski)", "helibernina.ch"),
+                (12, "Six Senses Residences Courchevel", "sixsenses.com"),
+                (13, "Six Senses Crans-Montana", "sixsenses.com"),
+            ],
+            real_config,
+        )
+        == set()
+    )
 
 
 def test_different_companies_sharing_words_are_not_duplicates(real_config):
     """`Ski Travel` and `Alpino Ski Travel` are separate agencies on separate sites."""
-    assert _pairs([
-        (1, "Ski Travel", "skitravel.example"),
-        (2, "Alpino Ski Travel", "alpinoski.example"),
-        (3, "Ski Explore Travel", "skiexplore.example"),
-        (4, "Travel Class", "travelclass.example"),
-        (5, "Royal Class Travel", "royalclass.example"),
-    ], real_config) == set()
+    assert (
+        _pairs(
+            [
+                (1, "Ski Travel", "skitravel.example"),
+                (2, "Alpino Ski Travel", "alpinoski.example"),
+                (3, "Ski Explore Travel", "skiexplore.example"),
+                (4, "Travel Class", "travelclass.example"),
+                (5, "Royal Class Travel", "royalclass.example"),
+            ],
+            real_config,
+        )
+        == set()
+    )
 
 
 def test_recommendation_protects_the_row_with_crm_state(real_config):
     from efe.dedupe import DuplicatePair
 
     pair = DuplicatePair(
-        row_a=170, row_b=235, name_a="Matuete", name_b="Matueté",
-        domain_a="matuete.com", domain_b="matuete.com", relation="identical name",
-        filled_a=12, filled_b=11,
-        crm_a={"Contacted": "YES", "Status": "Contacted", "Email_Sent": "X",
-               "Next_Follow_Up": '=IFERROR(AA170+AB170,"")', "Follow_Up_Days": "14"},
-        crm_b={"Contacted": "NO", "Status": "Not started", "Email_Sent": "",
-               "Next_Follow_Up": '=IFERROR(AA235+AB235,"")', "Follow_Up_Days": "14"},
+        row_a=170,
+        row_b=235,
+        name_a="Matuete",
+        name_b="Matueté",
+        domain_a="matuete.com",
+        domain_b="matuete.com",
+        relation="identical name",
+        filled_a=12,
+        filled_b=11,
+        crm_a={
+            "Contacted": "YES",
+            "Status": "Contacted",
+            "Email_Sent": "X",
+            "Next_Follow_Up": '=IFERROR(AA170+AB170,"")',
+            "Follow_Up_Days": "14",
+        },
+        crm_b={
+            "Contacted": "NO",
+            "Status": "Not started",
+            "Email_Sent": "",
+            "Next_Follow_Up": '=IFERROR(AA235+AB235,"")',
+            "Follow_Up_Days": "14",
+        },
     )
     action, why = pair.recommendation
     assert action == "keep 170, drop 235"
@@ -371,8 +432,13 @@ def test_a_row_with_only_defaults_is_not_treated_as_worked(real_config):
     """`Next_Follow_Up` is a live formula on every row and `Follow_Up_Days` is 14."""
     from efe.dedupe import DuplicatePair
 
-    untouched = {"Contacted": "NO", "Status": "Not started", "Next_Action": "TBD",
-                 "Next_Follow_Up": '=IFERROR(AA9+AB9,"")', "Follow_Up_Days": "14"}
+    untouched = {
+        "Contacted": "NO",
+        "Status": "Not started",
+        "Next_Action": "TBD",
+        "Next_Follow_Up": '=IFERROR(AA9+AB9,"")',
+        "Follow_Up_Days": "14",
+    }
     assert DuplicatePair._is_worked(untouched) is False
 
 
@@ -381,9 +447,15 @@ def test_both_worked_rows_are_never_auto_resolved(real_config):
 
     worked = {"Contacted": "YES", "Status": "Contacted"}
     pair = DuplicatePair(
-        row_a=1, row_b=2, name_a="A", name_b="A", domain_a="x.example",
-        domain_b="x.example", relation="identical name",
-        crm_a=dict(worked), crm_b=dict(worked),
+        row_a=1,
+        row_b=2,
+        name_a="A",
+        name_b="A",
+        domain_a="x.example",
+        domain_b="x.example",
+        relation="identical name",
+        crm_a=dict(worked),
+        crm_b=dict(worked),
     )
     action, why = pair.recommendation
     assert action == "MERGE BY HAND"
@@ -393,6 +465,7 @@ def test_both_worked_rows_are_never_auto_resolved(real_config):
 # ---------------------------------------------------------------------------
 # Homepage role addresses are high -- but only on the entity's own domain
 # ---------------------------------------------------------------------------
+
 
 def _enricher(real_config, tmp_path):
     from efe.extract.scope import ScopeGuard
@@ -418,9 +491,14 @@ def _home_page(url="https://alpina.example/"):
     return FetchedPage(
         url=url,
         kind=PageKind.HOME,
-        page=CachedPage(url=url, final_url=url, status=200, body="<html></html>",
-                        fetched_at=datetime(2026, 8, 21),
-                        headers={"content-type": "text/html"}),
+        page=CachedPage(
+            url=url,
+            final_url=url,
+            status=200,
+            body="<html></html>",
+            fetched_at=datetime(2026, 8, 21),
+            headers={"content-type": "text/html"},
+        ),
         scope=ScopeDecision(verdict=ScopeVerdict.OWN_DOMAIN, reason="own domain"),
     )
 
@@ -444,11 +522,12 @@ def test_a_third_party_address_in_the_same_footer_stays_held(real_config, tmp_pa
 
     enricher = _enricher(real_config, tmp_path)
     base = enricher._confidence(_home_page(), field=Field_.GENERAL_EMAIL, method="mailto")
-    for foreign in ("contact@webagency.example", "hello@pr-firm.example",
-                    "support@bookingplatform.example"):
-        confidence, note = enricher._email_confidence(
-            _home_page(), foreign, "alpina.example", base
-        )
+    for foreign in (
+        "contact@webagency.example",
+        "hello@pr-firm.example",
+        "support@bookingplatform.example",
+    ):
+        confidence, note = enricher._email_confidence(_home_page(), foreign, "alpina.example", base)
         assert confidence is Confidence.MEDIUM, foreign
         assert "does not match the site domain" in note
 
@@ -476,10 +555,14 @@ def test_the_promotion_does_not_apply_on_an_unmatched_group_page(real_config, tm
     page = FetchedPage(
         url="https://grandclass.example/",
         kind=PageKind.HOME,
-        page=CachedPage(url="https://grandclass.example/",
-                        final_url="https://grandclass.example/", status=200,
-                        body="<html></html>", fetched_at=datetime(2026, 8, 21),
-                        headers={"content-type": "text/html"}),
+        page=CachedPage(
+            url="https://grandclass.example/",
+            final_url="https://grandclass.example/",
+            status=200,
+            body="<html></html>",
+            fetched_at=datetime(2026, 8, 21),
+            headers={"content-type": "text/html"},
+        ),
         scope=ScopeDecision(verdict=ScopeVerdict.SHARED_UNMATCHED, reason="group page"),
     )
     enricher = _enricher(real_config, tmp_path)
@@ -493,6 +576,7 @@ def test_the_promotion_does_not_apply_on_an_unmatched_group_page(real_config, tm
 # ---------------------------------------------------------------------------
 # Rows on domains that refuse automated access are never fetched
 # ---------------------------------------------------------------------------
+
 
 def test_needs_manual_url_rows_are_skipped_without_a_fetch(synthetic_config):
     from efe.workbook.reader import load_workbook_view, select_candidates
@@ -523,8 +607,10 @@ def test_a_group_homepage_cannot_identify_one_property(real_config):
 
     home = guard.decide(
         entity_name="Airelles Courchevel - Les Airelles",
-        domain="airelles.example", resort_base="Courchevel 1850",
-        page_url="https://airelles.example/", identity_text=identity,
+        domain="airelles.example",
+        resort_base="Courchevel 1850",
+        page_url="https://airelles.example/",
+        identity_text=identity,
         is_homepage=True,
     )
     assert home.verdict is ScopeVerdict.SHARED_UNMATCHED
@@ -533,9 +619,11 @@ def test_a_group_homepage_cannot_identify_one_property(real_config):
     # The same words on a property page are a genuine match.
     inner = guard.decide(
         entity_name="Airelles Courchevel - Les Airelles",
-        domain="airelles.example", resort_base="Courchevel 1850",
+        domain="airelles.example",
+        resort_base="Courchevel 1850",
         page_url="https://airelles.example/fr/destination/courchevel/contacts",
-        identity_text="Les Airelles Courchevel - contacts", is_homepage=False,
+        identity_text="Les Airelles Courchevel - contacts",
+        is_homepage=False,
     )
     assert inner.verdict is ScopeVerdict.SHARED_MATCHED
 
@@ -543,8 +631,11 @@ def test_a_group_homepage_cannot_identify_one_property(real_config):
 def test_the_group_row_itself_still_accepts_its_homepage(real_config):
     guard = ScopeGuard(real_config.scope, Counter({"airelles.example": 2}))
     decision = guard.decide(
-        entity_name="Airelles", domain="airelles.example", resort_base="",
-        page_url="https://airelles.example/", identity_text="Airelles",
+        entity_name="Airelles",
+        domain="airelles.example",
+        resort_base="",
+        page_url="https://airelles.example/",
+        identity_text="Airelles",
         is_homepage=True,
     )
     assert decision.verdict is ScopeVerdict.SHARED_MATCHED
@@ -569,23 +660,27 @@ def test_no_homepage_promotion_on_a_group_domain(real_config, tmp_path):
         real_config, Fetcher(real_config.fetch, PageCache(tmp_path, enabled=False)), guard
     )
     page = FetchedPage(
-        url="https://airelles.com/", kind=PageKind.HOME,
-        page=CachedPage(url="https://airelles.com/", final_url="https://airelles.com/",
-                        status=200, body="<html></html>",
-                        fetched_at=datetime(2026, 8, 21),
-                        headers={"content-type": "text/html"}),
+        url="https://airelles.com/",
+        kind=PageKind.HOME,
+        page=CachedPage(
+            url="https://airelles.com/",
+            final_url="https://airelles.com/",
+            status=200,
+            body="<html></html>",
+            fetched_at=datetime(2026, 8, 21),
+            headers={"content-type": "text/html"},
+        ),
         scope=ScopeDecision(verdict=ScopeVerdict.SHARED_MATCHED, reason="matched"),
     )
     base = enricher._confidence(page, field=Field_.GENERAL_EMAIL, method="mailto")
-    confidence, _ = enricher._email_confidence(
-        page, "info@airelles.com", "airelles.com", base
-    )
+    confidence, _ = enricher._email_confidence(page, "info@airelles.com", "airelles.com", base)
     assert confidence is Confidence.MEDIUM
 
 
 # ---------------------------------------------------------------------------
 # Malformed sitemap entries must not become requests, or cost page budget
 # ---------------------------------------------------------------------------
+
 
 def test_relative_and_schemeless_sitemap_entries_are_resolved(real_config):
     from efe.fetch.discovery import normalise_sitemap_url
@@ -607,7 +702,10 @@ def test_plan_never_emits_a_url_without_a_host(real_config):
     from efe.fetch.discovery import plan_urls
 
     planned = plan_urls(
-        "https://hotel.example/", "hotel.example", "FR", real_config.discovery,
+        "https://hotel.example/",
+        "hotel.example",
+        "FR",
+        real_config.discovery,
         sitemap_urls=["/contact", "www.hotel.example/kontakt", "", "not a url"],
         page_links=["https://hotel.example/en/trade"],
         limit=8,
@@ -633,8 +731,9 @@ async def test_a_hostless_url_is_refused_without_a_request(real_config, tmp_path
         return httpx.Response(200, text="ok")
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    async with Fetcher(real_config.fetch, PageCache(tmp_path, enabled=False),
-                       client=client) as fetcher:
+    async with Fetcher(
+        real_config.fetch, PageCache(tmp_path, enabled=False), client=client
+    ) as fetcher:
         page = await fetcher.get("https:///robots.txt")
         assert not page.ok
         assert "not a usable http(s) URL" in page.error

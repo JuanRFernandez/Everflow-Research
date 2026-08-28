@@ -51,8 +51,10 @@ def _handler(request: httpx.Request) -> httpx.Response:
     if name is None:
         return httpx.Response(404, text="not found")
     body = fixture_text(name)
-    media = "application/xml" if name.endswith(".xml") else (
-        "text/plain" if name.endswith(".txt") else "text/html; charset=utf-8"
+    media = (
+        "application/xml"
+        if name.endswith(".xml")
+        else ("text/plain" if name.endswith(".txt") else "text/html; charset=utf-8")
     )
     return httpx.Response(200, text=body, headers={"content-type": media})
 
@@ -82,8 +84,13 @@ def run(cfg, candidates, **kwargs):
         async with Fetcher(cfg.fetch, cache, client=client) as fetcher:
             try:
                 return await run_enrichment(
-                    cfg, view, candidates, round_id="TEST", run_id="test-run",
-                    fetcher=fetcher, **kwargs
+                    cfg,
+                    view,
+                    candidates,
+                    round_id="TEST",
+                    run_id="test-run",
+                    fetcher=fetcher,
+                    **kwargs,
                 )
             finally:
                 await client.aclose()
@@ -100,9 +107,13 @@ def outcome(fast_config):
 
 # ---------------------------------------------------------------------------
 
+
 def test_pipeline_processes_every_selected_row(outcome):
+    """Seven, not six: a row marked Contacted = YES is a live deal, not a
+    frozen record, and it is selected like any other."""
     _, candidates, result = outcome
-    assert len(result.results) == len(candidates) == 6
+    assert len(result.results) == len(candidates) == 7
+    assert "Already Contacted Agency" in {c.name for c in candidates}
 
 
 def test_role_addresses_are_written_to_the_right_columns(fast_config, outcome):
@@ -136,11 +147,16 @@ def test_socials_are_captured(outcome):
     assert written.get((2, "O")) == "https://www.linkedin.com/company/summit-lodge-verbier"
 
 
-def test_published_trade_terms_are_captured_verbatim(outcome):
+def test_published_trade_terms_are_held_never_written(outcome):
+    """Commission_or_Partner_Terms is protected: a published commission is
+    evidence for the review queue, never a value this tool puts in the sheet.
+    The negotiated number is Juan's to type."""
     _, _, result = outcome
-    terms = [c for c in result.changes if c.column == "U"]
+    assert not [c for c in result.changes if c.column == "U"]
+    terms = [c for c in result.held if c.column == "U"]
     assert terms, "the trade page states a commission and should have been captured"
     assert "commission of 10%" in terms[0].new_value
+    assert "protected column" in terms[0].note
 
 
 def test_impressum_yields_a_named_representative_with_a_role(outcome):
@@ -214,6 +230,7 @@ def test_ledger_domain_revisits_are_logged(outcome):
 # Resume
 # ---------------------------------------------------------------------------
 
+
 def test_run_is_resumable(fast_config):
     view = load_workbook_view(fast_config)
     candidates, _ = select_candidates(view, fast_config)
@@ -241,8 +258,15 @@ def test_ledger_records_are_entity_field_shaped(fast_config):
     assert lines
     for record in lines:
         # The Phase-1 `entity_field` columns must all be present.
-        for key in ("entity_id", "field", "value", "confidence", "source_url",
-                    "fetched_at", "round_id"):
+        for key in (
+            "entity_id",
+            "field",
+            "value",
+            "confidence",
+            "source_url",
+            "fetched_at",
+            "round_id",
+        ):
             assert key in record
         assert record["round_id"] == "TEST"
 
@@ -251,15 +275,22 @@ def test_ledger_records_are_entity_field_shaped(fast_config):
 # Reporting and the full write
 # ---------------------------------------------------------------------------
 
+
 def test_reports_render(fast_config, outcome):
     view, candidates, result = outcome
     _, skipped = select_candidates(view, fast_config)
     from datetime import datetime
 
     summary = build_summary(
-        fast_config, view, result, run_id="test-run", round_id="TEST",
-        started_at=datetime(2026, 8, 21, 9, 0), dry_run=True,
-        selected=len(candidates), skipped=skipped,
+        fast_config,
+        view,
+        result,
+        run_id="test-run",
+        round_id="TEST",
+        started_at=datetime(2026, 8, 21, 9, 0),
+        dry_run=True,
+        selected=len(candidates),
+        skipped=skipped,
     )
     markdown = render_markdown(summary, result)
     assert "# EFE enrichment run" in markdown
@@ -274,8 +305,11 @@ def test_reports_render(fast_config, outcome):
 def test_full_write_passes_the_fidelity_gate(fast_config, outcome):
     view, _, result = outcome
     written = write_enriched(
-        fast_config, view, result.changes,
-        run_id="test-run", held_back=result.held,
+        fast_config,
+        view,
+        result.changes,
+        run_id="test-run",
+        held_back=result.held,
     )
     assert written.is_file()
 

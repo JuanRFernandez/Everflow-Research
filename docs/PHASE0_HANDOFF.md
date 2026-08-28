@@ -37,6 +37,10 @@ the raw matched substring; the writer refuses anything missing one.
 
 ### What was not touched
 
+> **Superseded 2026-08-29.** Row-level freezing is gone: ownership is per column
+> (see README, "Ownership is per column"). A `Contacted = YES` row is enriched like
+> any other; its CRM columns are protected by name instead.
+
 - The **18 gold rows** (`Contacted = YES`) — never fetched, never written. Verified:
   0 cells changed on those rows.
 - **CRM columns Z–AJ** — verified: 0 cells changed.

@@ -16,6 +16,7 @@ def values(finds):
 # Socials
 # ---------------------------------------------------------------------------
 
+
 def test_linkedin_company_page_is_extracted(real_config):
     finds = extract_linkedin(fixture_text("socials_footer.html"), real_config.social)
     company = [f for f in finds if not f.extra.get("personal_profile")]
@@ -39,6 +40,7 @@ def test_instagram_handle_excludes_platform_routes(real_config):
 # ---------------------------------------------------------------------------
 # Persons
 # ---------------------------------------------------------------------------
+
 
 def test_name_and_role_pairs_are_extracted():
     finds = extract_persons(fixture_text("team_roles.html"))
@@ -73,6 +75,7 @@ def test_empty_body_is_safe():
 # Terms
 # ---------------------------------------------------------------------------
 
+
 def test_trade_page_detection(real_config):
     assert is_trade_page("https://x.example/en/trade", real_config.terms) is True
     assert is_trade_page("https://x.example/travel-agents", real_config.terms) is True
@@ -81,7 +84,8 @@ def test_trade_page_detection(real_config):
 
 def test_terms_are_verbatim_from_a_trade_page(real_config):
     finds = extract_terms(
-        fixture_text("trade_terms.html"), "https://summitlodge.example/en/trade",
+        fixture_text("trade_terms.html"),
+        "https://summitlodge.example/en/trade",
         real_config.terms,
     )
     joined = " ".join(f.value for f in finds)
@@ -94,22 +98,28 @@ def test_terms_are_verbatim_from_a_trade_page(real_config):
 
 def test_stated_percentage_is_surfaced_first(real_config):
     finds = extract_terms(
-        fixture_text("trade_terms.html"), "https://summitlodge.example/en/trade",
+        fixture_text("trade_terms.html"),
+        "https://summitlodge.example/en/trade",
         real_config.terms,
     )
     assert finds[0].extra["has_percentage"] == "true"
 
 
 def test_terms_are_not_taken_from_a_non_trade_page(real_config):
-    assert extract_terms(
-        fixture_text("trade_terms.html"), "https://summitlodge.example/en/rooms",
-        real_config.terms,
-    ) == []
+    assert (
+        extract_terms(
+            fixture_text("trade_terms.html"),
+            "https://summitlodge.example/en/rooms",
+            real_config.terms,
+        )
+        == []
+    )
 
 
 def test_summary_respects_the_cell_length_budget(real_config):
     finds = extract_terms(
-        fixture_text("trade_terms.html"), "https://summitlodge.example/en/trade",
+        fixture_text("trade_terms.html"),
+        "https://summitlodge.example/en/trade",
         real_config.terms,
     )
     assert len(summarise(finds, real_config.terms)) <= real_config.terms.max_chars

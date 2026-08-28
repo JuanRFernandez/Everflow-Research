@@ -28,16 +28,20 @@ from efe.pipeline import choose_values
 NOW = datetime(2026, 8, 21, 12, 0, 0)
 
 
-def value(address, url, kind=PageKind.CONTACT, field=Field_.GENERAL_EMAIL,
-          confidence=Confidence.HIGH):
+def value(
+    address, url, kind=PageKind.CONTACT, field=Field_.GENERAL_EMAIL, confidence=Confidence.HIGH
+):
     return ExtractedValue(
         field=field,
         value=address,
         confidence=confidence,
         data_class=DataClass.CORPORATE_ROLE,
         evidence=Evidence(
-            source_url=url, matched_text=address, byte_offset=0,
-            fetched_at=NOW, page_kind=kind,
+            source_url=url,
+            matched_text=address,
+            byte_offset=0,
+            fetched_at=NOW,
+            page_kind=kind,
         ),
         extractor="tests",
     )
@@ -45,12 +49,23 @@ def value(address, url, kind=PageKind.CONTACT, field=Field_.GENERAL_EMAIL,
 
 def candidate():
     return Candidate(
-        entity_id="EFE-0001", row=2, name="Test", website_url="https://x.example",
+        entity_id="EFE-0001",
+        row=2,
+        name="Test",
+        website_url="https://x.example",
         domain="x.example",
         existing=dict.fromkeys(
-            ("general_email", "sales_b2b_email", "phone", "whatsapp",
-             "contact_person_name", "contact_person_role", "linkedin_url",
-             "instagram_handle", "commission_terms"),
+            (
+                "general_email",
+                "sales_b2b_email",
+                "phone",
+                "whatsapp",
+                "contact_person_name",
+                "contact_person_role",
+                "linkedin_url",
+                "instagram_handle",
+                "commission_terms",
+            ),
             "TBD",
         ),
     )
@@ -59,6 +74,7 @@ def candidate():
 # ---------------------------------------------------------------------------
 # Dedupe and cap
 # ---------------------------------------------------------------------------
+
 
 def test_the_same_value_on_many_pages_is_recorded_once(real_config):
     """A footer address appears on every page. It is one candidate, not eight."""
@@ -69,7 +85,7 @@ def test_the_same_value_on_many_pages_is_recorded_once(real_config):
     chosen, held, dropped = choose_values(candidate(), values, real_config)
 
     assert chosen[Field_.GENERAL_EMAIL].value == "info@x.example"
-    assert [h.value for h in held] == ["reservations@x.example"]
+    assert [h.value for h, _ in held] == ["reservations@x.example"]
     assert dropped == 0
 
 
@@ -86,9 +102,7 @@ def test_the_best_evidenced_occurrence_survives_deduplication(real_config):
 
 def test_alternates_are_capped_and_the_overflow_is_counted(real_config):
     cap = real_config.review.max_alternates_per_field
-    values = [
-        value(f"info{n}@x.example", f"https://x.example/p{n}") for n in range(cap + 6)
-    ]
+    values = [value(f"info{n}@x.example", f"https://x.example/p{n}") for n in range(cap + 6)]
     chosen, held, dropped = choose_values(candidate(), values, real_config)
 
     assert len(chosen) == 1
@@ -106,16 +120,14 @@ def test_nothing_is_dropped_when_under_the_cap(real_config):
 
 def test_cap_is_per_field_not_per_row(real_config):
     cap = real_config.review.max_alternates_per_field
-    values = [
-        value(f"info{n}@x.example", f"https://x.example/p{n}") for n in range(cap + 3)
-    ]
+    values = [value(f"info{n}@x.example", f"https://x.example/p{n}") for n in range(cap + 3)]
     values += [
         value(f"+4179555{n:04d}", f"https://x.example/p{n}", field=Field_.PHONE)
         for n in range(cap + 3)
     ]
     _, held, _ = choose_values(candidate(), values, real_config)
     per_field = {}
-    for item in held:
+    for item, _ in held:
         per_field[item.field] = per_field.get(item.field, 0) + 1
     assert per_field[Field_.GENERAL_EMAIL] == cap
     assert per_field[Field_.PHONE] == cap
@@ -124,6 +136,7 @@ def test_cap_is_per_field_not_per_row(real_config):
 # ---------------------------------------------------------------------------
 # Failing-domain circuit breaker
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def counting_fetcher(real_config, tmp_path):
@@ -156,6 +169,7 @@ async def test_a_domain_answering_429_is_abandoned(counting_fetcher, real_config
 @pytest.mark.asyncio
 async def test_a_404_does_not_count_toward_abandoning(real_config, tmp_path):
     """Probing candidate paths produces 404s by design; they are normal misses."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/robots.txt":
             return httpx.Response(404)
@@ -177,8 +191,9 @@ async def test_a_success_resets_the_failure_run(real_config, tmp_path):
     def handler(request: httpx.Request) -> httpx.Response:
         state["n"] += 1
         if state["n"] % 3 == 0:
-            return httpx.Response(200, text="<html>ok</html>",
-                                  headers={"content-type": "text/html"})
+            return httpx.Response(
+                200, text="<html>ok</html>", headers={"content-type": "text/html"}
+            )
         return httpx.Response(503, text="down")
 
     real_config.fetch.per_domain_delay_seconds = 0.0
@@ -194,8 +209,13 @@ async def test_a_success_resets_the_failure_run(real_config, tmp_path):
 def test_note_outcome_is_pure_bookkeeping(real_config, tmp_path):
     """The breaker only reads status and error; it never re-requests anything."""
     fetcher = Fetcher(real_config.fetch, PageCache(tmp_path / "c", enabled=False))
-    failure = CachedPage(url="https://x.example/", final_url="https://x.example/",
-                         status=0, fetched_at=NOW, error="HTTP 429")
+    failure = CachedPage(
+        url="https://x.example/",
+        final_url="https://x.example/",
+        status=0,
+        fetched_at=NOW,
+        error="HTTP 429",
+    )
     for _ in range(real_config.fetch.max_consecutive_failures):
         fetcher._note_outcome("x.example", failure)
     assert "x.example" in fetcher.skipped_domains

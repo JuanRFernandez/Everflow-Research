@@ -29,7 +29,13 @@ from efe.models import (
     today_iso,
 )
 from efe.pipeline import RunLedger, run_enrichment
-from efe.report import build_summary, print_dry_run, print_summary, write_outputs
+from efe.report import (
+    build_summary,
+    print_dry_run,
+    print_summary,
+    render_paste_block,
+    write_outputs,
+)
 from efe.workbook.fixup import (
     assert_fixups_legal,
     assert_ids_unique_after,
@@ -51,7 +57,11 @@ from efe.workbook.reader import (
 from efe.workbook.resolve import Resolution
 from efe.workbook.state import WorkbookState, save_state, state_path
 from efe.workbook.verify import compare, format_report, snapshot
-from efe.workbook.writer import next_version_path, write_enriched
+from efe.workbook.writer import (
+    build_provenance_changes,
+    next_version_path,
+    write_enriched,
+)
 
 console = Console()
 
@@ -103,8 +113,30 @@ def build_parser() -> argparse.ArgumentParser:
     enrich.add_argument(
         "--rows",
         default=None,
-        metavar="A:B",
-        help="restrict to worksheet rows A to B inclusive, e.g. 2:21",
+        metavar="A:B|contacted",
+        help=(
+            "restrict to worksheet rows A to B inclusive (e.g. 2:21), or the "
+            "keyword 'contacted' for every row already marked Contacted = YES"
+        ),
+    )
+    enrich.add_argument(
+        "--cols",
+        default=None,
+        metavar="J,K,L,O",
+        help=(
+            "only propose these columns (letters or header names); anything else "
+            "found is still recorded in the review queue"
+        ),
+    )
+    enrich.add_argument(
+        "--only-empty",
+        action="store_true",
+        help="assert the run may only fill empty cells (already the rule; states it)",
+    )
+    enrich.add_argument(
+        "--emit-paste",
+        action="store_true",
+        help="emit a paste block for the Sheet panel and write no workbook",
     )
     _add_workbook_args(enrich)
     enrich.add_argument("--round", dest="round_id", default=None, help="round id, e.g. R2")
@@ -199,14 +231,49 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def parse_rows(spec: str | None) -> tuple[int, int] | None:
+def parse_rows(spec: str | None) -> tuple[int, int] | str | None:
+    """`A:B` -> bounds, or a keyword the caller resolves against the workbook."""
     if not spec:
         return None
+    if spec.strip().lower() == "contacted":
+        return "contacted"
     try:
         start, _, end = spec.partition(":")
         return int(start), int(end or start)
     except ValueError as exc:
-        raise SystemExit(f"--rows expects A:B with integers, got {spec!r}") from exc
+        raise SystemExit(f"--rows expects A:B with integers, or 'contacted', got {spec!r}") from exc
+
+
+def parse_cols(spec: str | None, cfg) -> set[str] | None:
+    """`J,K,L,O` or header names -> a set of column letters.
+
+    Naming a protected column is refused rather than silently ignored: asking
+    for it means a misunderstanding about who owns that column.
+    """
+    if not spec:
+        return None
+    wb = cfg.workbook
+    known = {wb.letter_of(name): name for name in wb.header}
+    letters: set[str] = set()
+    for raw in spec.split(","):
+        token = raw.strip()
+        if not token:
+            continue
+        if token in wb.header:
+            letters.add(wb.letter_of(token))
+        elif token.upper() in known:
+            letters.add(token.upper())
+        else:
+            raise SystemExit(f"--cols: {token!r} is not a PARTNERS column letter or name")
+    protected = {wb.letter_of(name) for name in wb.protected_columns}
+    asked = sorted(letters & protected)
+    if asked:
+        names = [wb.header_of(letter) for letter in asked]
+        raise SystemExit(
+            f"--cols names protected column(s) {names} ({asked}); those are never "
+            "written by any tool, in any row"
+        )
+    return letters
 
 
 # ---------------------------------------------------------------------------
@@ -448,7 +515,15 @@ def announce(cfg, paths: dict[str, Path], workbook: Path | None = None) -> None:
     console.print()
     console.print("[bold]Local artifacts[/bold] - reports, CSVs, decision table")
     console.print(f"  [dim]{cfg.artifacts_directory}[/dim]")
-    for label in ("report", "json", "changes", "review", "duplicates", "decisions"):
+    for label in (
+        "paste",
+        "report",
+        "json",
+        "changes",
+        "review",
+        "duplicates",
+        "decisions",
+    ):
         if label in paths:
             console.print(f"  {label:11s} {paths[label].name}")
 
@@ -518,23 +593,31 @@ def cmd_enrich(args: argparse.Namespace) -> int:
         command="efe enrich",
         record_state=False,  # recorded below, once the run may proceed
     )
+    # A paste run emits no workbook, so it needs no output version -- which is
+    # also what lets it read a temporary export whose name carries no vNN.
+    paper_only = args.dry_run or args.emit_paste
     # Fail on a version conflict before any fetching happens, not after an hour.
-    destination = None if args.dry_run else next_version_path(cfg, view.version)
+    destination = None if paper_only else next_version_path(cfg, view.version)
     record_input_state(cfg, view, "efe enrich")
 
     candidates, skipped = select_candidates(view, cfg)
     selected_total = len(candidates)
+    columns = parse_cols(args.cols, cfg)
 
     bounds = parse_rows(args.rows)
-    if bounds:
+    if bounds == "contacted":
+        # The rows Juan has already written to: live deals, first in the queue.
+        letter = cfg.workbook.column_for("contacted")
+        marked = {pr.row for pr in view.rows if pr.get(letter).strip().upper() == "YES"}
+        candidates = [c for c in candidates if c.row in marked]
+    elif bounds:
         low, high = bounds
         candidates = [c for c in candidates if low <= c.row <= high]
     if args.limit is not None:
         candidates = candidates[: args.limit]
 
-    console.print(
-        f"[bold]{run_id}[/bold]  round={round_id}  {'DRY RUN' if args.dry_run else 'WRITE'}"
-    )
+    mode = "PASTE" if args.emit_paste else ("DRY RUN" if args.dry_run else "WRITE")
+    console.print(f"[bold]{run_id}[/bold]  round={round_id}  {mode}")
     console.print(
         f"  input: {view.path.name} (v{view.version:02d}, {view.data_rows} data rows)"
         + (f"  ->  output: {destination.name}" if destination else "")
@@ -544,6 +627,10 @@ def cmd_enrich(args: argparse.Namespace) -> int:
         targets.append(f"categories={','.join(cfg.selection.categories)}")
     if cfg.selection.resorts:
         targets.append(f"resorts={len(cfg.selection.resorts)} objetivo")
+    if bounds == "contacted":
+        targets.append("rows=contacted")
+    if columns:
+        targets.append(f"cols={','.join(sorted(columns))}")
     console.print(
         f"  {selected_total} rows selected of {len(view.rows)}; "
         f"processing {len(candidates)} this run"
@@ -555,7 +642,7 @@ def cmd_enrich(args: argparse.Namespace) -> int:
         f"max {cfg.fetch.max_pages_per_entity} pages per entity\n"
     )
 
-    ledger = ledger_for(cfg, round_id, run_id, dry_run=args.dry_run)
+    ledger = ledger_for(cfg, round_id, run_id, dry_run=paper_only)
     if args.fresh:
         ledger.reset()
 
@@ -575,12 +662,13 @@ def cmd_enrich(args: argparse.Namespace) -> int:
             use_cache=not args.no_cache,
             ledger=ledger,
             on_progress=on_progress,
+            columns=columns,
         )
     )
 
     console.print()
     resumed = report_resumed(len(candidates), len(outcome.results), ledger, round_id)
-    if args.dry_run:
+    if paper_only:
         print_dry_run(console, cfg, outcome)
 
     summary = build_summary(
@@ -590,19 +678,32 @@ def cmd_enrich(args: argparse.Namespace) -> int:
         run_id=run_id,
         round_id=round_id,
         started_at=started_at,
-        dry_run=args.dry_run,
+        dry_run=paper_only,
         selected=selected_total,
         skipped=skipped,
     )
 
     duplicates_path, duplicate_count = write_duplicates_report(cfg, view, run_id)
 
-    if args.dry_run:
-        stem = f"{today_iso()}_DRYRUN_{run_id}"
-        written = write_outputs(cfg.artifacts_directory, stem, summary, outcome)
+    if paper_only:
+        paste = None
+        if args.emit_paste:
+            provenance = build_provenance_changes(outcome.changes, cfg, view, today_iso())
+            handoff = render_sheets_handoff(inspect_sheet_ranges(view.path, cfg), cfg)
+            paste = render_paste_block(
+                cfg, summary, outcome, provenance=provenance, handoff=handoff
+            )
+        stem = f"{today_iso()}_{'PASTE' if args.emit_paste else 'DRYRUN'}_{run_id}"
+        written = write_outputs(cfg.artifacts_directory, stem, summary, outcome, paste=paste)
         written["duplicates"] = duplicates_path
         print_summary(console, summary)
-        console.print("\n[yellow]Dry run: no workbook was written.[/yellow]")
+        if args.emit_paste:
+            console.print(
+                f"\n[green]{len(outcome.changes)} proposal(s)[/green] in the paste "
+                f"block; {len(outcome.held)} held for review. No workbook was written."
+            )
+        else:
+            console.print("\n[yellow]Dry run: no workbook was written.[/yellow]")
         if duplicate_count:
             console.print(
                 f"[yellow]{duplicate_count} duplicate row pair(s) found[/yellow] "

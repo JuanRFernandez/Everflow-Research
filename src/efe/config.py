@@ -13,6 +13,7 @@ are derived from the header names, so a new version never needs a config edit.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -53,7 +54,9 @@ REQUIRED_LOGICAL_FIELDS = (
     "round",
 )
 
-#: Logical fields the enricher fills; each must be a writable column.
+#: Logical fields the enricher fills; each must be a research or contact column.
+#: `commission_terms` is deliberately absent: Commission_or_Partner_Terms is a
+#: protected column -- a negotiated commission is Juan's to type, not ours to guess.
 ENRICHABLE_LOGICAL_FIELDS = (
     "general_email",
     "sales_b2b_email",
@@ -63,12 +66,22 @@ ENRICHABLE_LOGICAL_FIELDS = (
     "contact_person_role",
     "linkedin_url",
     "instagram_handle",
-    "commission_terms",
 )
 
 
+class SkipRule(BaseModel):
+    #: Header name of the column (e.g. "Contacted").
+    column: str
+    values: list[str]
+
+
 class WorkbookConfig(BaseModel):
-    """The PARTNERS contract. Column *names* everywhere; letters are derived."""
+    """The PARTNERS contract. Column *names* everywhere; letters are derived.
+
+    Ownership is declared **per column, never per row**. Contacting a partner marks
+    that row's CRM columns as Juan's -- it does not freeze the row: the moment a
+    hotel answers is the moment its missing WhatsApp and LinkedIn matter most.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -87,21 +100,47 @@ class WorkbookConfig(BaseModel):
     changelog_detail_sheet: str
     tbd_token: str
     empty_tokens: list[str]
+    #: Header name -> regex the cell must match to count as holding a real value.
+    #: A `Sales_B2B_Email` holding a person's name is not an address, so it counts
+    #: as empty and may be proposed again.
+    value_patterns: dict[str, str] = Field(default_factory=dict)
     #: logical field -> header name.
     columns: dict[str, str]
-    #: The only columns the enricher may write (header names).
-    writable_columns: list[str]
-    #: Written only on rows where a writable column changed.
+
+    # -- ownership: the five lists partition the header, exactly ---------------
+    #: Only `promote` creates these, on a brand-new row.
+    identity_columns: list[str]
+    #: The enricher may propose these, and only when the cell is empty.
+    research_columns: list[str]
+    #: Same rule, but a human value always wins: names and roles are people.
+    contact_columns: list[str]
+    #: Stamped or appended on rows that gained a value. Not "only if empty":
+    #: Source_URL accumulates, Date_Verified and Round are re-stamped.
     provenance_columns: list[str]
-    #: Human-owned; writing any of these is a hard error.
-    crm_columns: list[str]
-    #: Live formulas; must hold a formula on every data row, never written.
+    #: Never written or proposed by any tool, in any row. Juan's, end to end.
+    protected_columns: list[str]
+    #: Live formulas; must hold a formula on every data row. Subset of protected.
     formula_columns: list[str]
-    #: Columns that feed live formulas (here or on other sheets). Never writable:
-    #: the writer preserves cached formula results, which a change would stale.
+    #: Columns that feed live formulas (here or on other sheets). The writer
+    #: preserves cached formula results, which a change to these would stale.
     formula_precedents: list[str] = Field(default_factory=list)
+    #: Rows whose formula column may hold a typed value instead of the formula --
+    #: `Contacted = YES` rows are the human's end to end. This is ONLY about the
+    #: schema check; it grants no exemption from enrichment.
+    formula_override_when: list[SkipRule] = Field(default_factory=list)
 
     _letters: dict[str, str] = PrivateAttr(default_factory=dict)
+
+    # -- derived ownership views ---------------------------------------------
+    @property
+    def writable_columns(self) -> list[str]:
+        """What the enricher may fill: research plus contact, in header order."""
+        return [*self.research_columns, *self.contact_columns]
+
+    @property
+    def crm_columns(self) -> list[str]:
+        """Kept name for the protected set; every caller means "hands off"."""
+        return self.protected_columns
 
     # -- validation ---------------------------------------------------------
     @model_validator(mode="after")
@@ -120,17 +159,48 @@ class WorkbookConfig(BaseModel):
         for logical, name in self.columns.items():
             if name not in seen:
                 problems.append(f"columns.{logical} -> {name!r} is not in header")
-        for label, names in (
-            ("writable_columns", self.writable_columns),
+        owners = (
+            ("identity_columns", self.identity_columns),
+            ("research_columns", self.research_columns),
+            ("contact_columns", self.contact_columns),
             ("provenance_columns", self.provenance_columns),
-            ("crm_columns", self.crm_columns),
+            ("protected_columns", self.protected_columns),
+        )
+        for label, names in (
+            *owners,
             ("formula_columns", self.formula_columns),
             ("formula_precedents", self.formula_precedents),
-            ("required_sheets", []),
+            ("value_patterns", list(self.value_patterns)),
         ):
             for name in names:
                 if name not in seen:
                     problems.append(f"{label} names {name!r}, which is not in header")
+
+        # Every column has exactly one owner. This is the invariant that would have
+        # caught Priority_Score and Round falling through the cracks when ownership
+        # was first written down: a column nobody owns is a column anybody writes.
+        owner_of: dict[str, list[str]] = {}
+        for label, names in owners:
+            for name in names:
+                owner_of.setdefault(name, []).append(label)
+        for name in self.header:
+            claims = owner_of.get(name, [])
+            if not claims:
+                problems.append(
+                    f"{name!r} belongs to no ownership list; add it to one of "
+                    f"{[label for label, _ in owners]}"
+                )
+            elif len(claims) > 1:
+                problems.append(f"{name!r} is claimed by {claims}; it must have one owner")
+
+        for name in self.formula_columns:
+            if name not in self.protected_columns:
+                problems.append(f"formula column {name!r} must also be protected")
+        for rule in self.formula_override_when:
+            if rule.column not in seen:
+                problems.append(
+                    f"formula_override_when names {rule.column!r}, which is not in header"
+                )
         if self.sheet not in self.required_sheets:
             problems.append(f"required_sheets must include the data sheet {self.sheet!r}")
         if problems:
@@ -181,6 +251,27 @@ class WorkbookConfig(BaseModel):
         return self.letters(self.crm_columns)
 
     @property
+    def protected_letters(self) -> list[str]:
+        return self.letters(self.protected_columns)
+
+    @property
+    def identity_letters(self) -> list[str]:
+        return self.letters(self.identity_columns)
+
+    def owner_of(self, header_name: str) -> str:
+        """Which ownership list a column belongs to, for a legible refusal."""
+        for label, names in (
+            ("identity", self.identity_columns),
+            ("research", self.research_columns),
+            ("contact", self.contact_columns),
+            ("provenance", self.provenance_columns),
+            ("protected", self.protected_columns),
+        ):
+            if header_name in names:
+                return label
+        return "unowned"
+
+    @property
     def formula_letters(self) -> list[str]:
         return self.letters(self.formula_columns)
 
@@ -192,22 +283,24 @@ class WorkbookConfig(BaseModel):
     def column_count(self) -> int:
         return len(self.header)
 
-    def is_empty(self, value: Any) -> bool:
-        """True when a cell may be filled: it holds nothing meaningful yet."""
+    def is_empty(self, value: Any, column: str | None = None) -> bool:
+        """True when a cell may be filled: it holds nothing meaningful yet.
+
+        With `column`, the column's own `value_patterns` regex also decides: a
+        `Sales_B2B_Email` holding `Kai Schweigkofler - Travel Agency Support desk`
+        is not an address, so it counts as empty and may be proposed again. The old
+        value still travels with the proposal, so nothing is replaced unseen.
+        """
         if value is None:
             return True
         text = str(value).strip()
-        return text.upper() in {t.strip().upper() for t in self.empty_tokens}
-
-
-class SkipRule(BaseModel):
-    #: Header name of the column (e.g. "Contacted").
-    column: str
-    values: list[str]
+        if text.upper() in {t.strip().upper() for t in self.empty_tokens}:
+            return True
+        pattern = self.value_patterns.get(column or "")
+        return bool(pattern) and re.fullmatch(pattern, text) is None
 
 
 class SelectionConfig(BaseModel):
-    skip_when: list[SkipRule] = Field(default_factory=list)
     require_website: bool = True
     round_tag: str = "R2-enrich"
     #: Category prefixes ("1." matches "1. Hotels"). Empty = all categories.
@@ -384,29 +477,21 @@ class Config(BaseModel):
         """Structural problems that would make a run unsafe. Empty list == fine."""
         problems: list[str] = []
         wb = self.workbook
-        overlap = set(wb.writable_columns) & set(wb.crm_columns)
+        # The five ownership lists already partition the header (WorkbookConfig
+        # validates that), so overlaps cannot happen. What is left to check is that
+        # the cross-cutting lists land on columns nobody may write.
+        writable = set(wb.writable_columns)
+        overlap = writable & set(wb.formula_columns)
         if overlap:
-            problems.append(f"writable_columns overlaps crm_columns: {sorted(overlap)}")
-        overlap = set(wb.provenance_columns) & set(wb.crm_columns)
+            problems.append(f"a formula column may not be writable: {sorted(overlap)}")
+        overlap = writable & set(wb.formula_precedents)
         if overlap:
-            problems.append(f"provenance_columns overlaps crm_columns: {sorted(overlap)}")
-        overlap = set(wb.writable_columns) & set(wb.formula_columns)
-        if overlap:
-            problems.append(f"writable_columns overlaps formula_columns: {sorted(overlap)}")
-        overlap = set(wb.writable_columns) & set(wb.formula_precedents)
-        if overlap:
-            problems.append(f"writable_columns overlaps formula_precedents: {sorted(overlap)}")
+            problems.append(f"a formula precedent may not be writable: {sorted(overlap)}")
         overlap = set(wb.provenance_columns) & set(wb.formula_precedents)
         if overlap:
-            problems.append(f"provenance_columns overlaps formula_precedents: {sorted(overlap)}")
-        if wb.columns["contacted"] not in wb.crm_columns:
-            problems.append("the Contacted column must be listed in crm_columns")
-        for name in wb.formula_columns:
-            if name not in wb.crm_columns:
-                problems.append(f"formula column {name!r} must also be listed in crm_columns")
-        for rule in self.selection.skip_when:
-            if rule.column not in wb.header:
-                problems.append(f"selection.skip_when names column {rule.column!r}, not in header")
+            problems.append(f"a formula precedent may not be provenance: {sorted(overlap)}")
+        if wb.columns["contacted"] not in wb.protected_columns:
+            problems.append("the Contacted column must be protected")
         try:
             if self.artifacts_directory == self.output_directory:
                 problems.append(
@@ -418,7 +503,11 @@ class Config(BaseModel):
         for logical in ENRICHABLE_LOGICAL_FIELDS:
             name = wb.columns[logical]
             if name not in wb.writable_columns:
-                problems.append(f"{logical} -> column {name!r} is not in writable_columns")
+                problems.append(
+                    f"{logical} -> column {name!r} is {wb.owner_of(name)}, so the enricher "
+                    "cannot fill it; move it to research/contact or drop it from "
+                    "ENRICHABLE_LOGICAL_FIELDS"
+                )
         return problems
 
 

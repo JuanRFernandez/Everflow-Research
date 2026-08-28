@@ -22,8 +22,17 @@ from efe.pipeline import FIELD_TO_COLUMN_KEY, RunOutcome
 from efe.workbook.reader import ENRICHABLE_FIELDS, WorkbookView
 
 REVIEW_CSV_HEADERS = [
-    "Row", "Entity_ID", "Entity_Name", "Would_Go_To", "Column", "Value",
-    "Confidence", "Data_Class", "Held_Back_Because", "Source_URL", "Fetched_At",
+    "Row",
+    "Entity_ID",
+    "Entity_Name",
+    "Would_Go_To",
+    "Column",
+    "Value",
+    "Confidence",
+    "Data_Class",
+    "Held_Back_Because",
+    "Source_URL",
+    "Fetched_At",
     "Extractor",
 ]
 
@@ -31,6 +40,7 @@ REVIEW_CSV_HEADERS = [
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
+
 
 def build_summary(
     cfg: Config,
@@ -53,7 +63,7 @@ def build_summary(
         for result in outcome.results:
             if result.candidate.row in filled_here:
                 continue
-            if spec.is_empty(result.candidate.existing.get(logical, "")):
+            if spec.is_empty(result.candidate.existing.get(logical, ""), spec.columns[logical]):
                 still_tbd[f"{column} {logical}"] += 1
 
     failures = [
@@ -67,9 +77,7 @@ def build_summary(
             "domain": domain,
             "rows": rows,
             "entities": [
-                pr.get(spec.column_for("entity_name"))
-                for pr in view.rows
-                if pr.row in rows
+                pr.get(spec.column_for("entity_name")) for pr in view.rows if pr.row in rows
             ],
         }
         for domain, rows in sorted(view.duplicate_domains.items())
@@ -84,10 +92,7 @@ def build_summary(
             "needed_tokens": r.required_tokens,
             # A row whose pages all failed never reached the guard at all;
             # reporting its default verdict would claim a judgement never made.
-            "verdict": (
-                "no pages fetched" if not r.pages_fetched
-                else r.scope_verdict.value
-            ),
+            "verdict": ("no pages fetched" if not r.pages_fetched else r.scope_verdict.value),
             "pages_matched": r.pages_matched,
             "pages_unmatched": r.pages_unmatched,
             "cells_written": sum(1 for c in outcome.changes if c.row == r.candidate.row),
@@ -141,6 +146,7 @@ def build_summary(
 # Console
 # ---------------------------------------------------------------------------
 
+
 def _scope_label(verdict: ScopeVerdict) -> str:
     return {
         ScopeVerdict.OWN_DOMAIN: "[green]own domain[/green]",
@@ -174,13 +180,11 @@ def print_dry_run(console: Console, cfg: Config, outcome: RunOutcome) -> None:
     for result in outcome.results:
         candidate = result.candidate
         console.rule(
-            f"[bold]row {candidate.row}[/bold]  {candidate.entity_id}  "
-            f"{candidate.name}",
+            f"[bold]row {candidate.row}[/bold]  {candidate.entity_id}  {candidate.name}",
             align="left",
         )
         console.print(
-            f"  domain      {candidate.domain}   "
-            f"scope: {_scope_label(result.scope_verdict)}"
+            f"  domain      {candidate.domain}   scope: {_scope_label(result.scope_verdict)}"
         )
         console.print(f"  pages       {len(result.pages_fetched)} fetched")
         for url in result.pages_fetched:
@@ -196,9 +200,17 @@ def print_dry_run(console: Console, cfg: Config, outcome: RunOutcome) -> None:
         writes = changes_by_row.get(candidate.row, [])
         if writes:
             table = Table(
-                "col", "field", "value", "conf", "why", show_lines=False,
-                title="WOULD WRITE", title_justify="left", title_style="bold green",
-                box=None, pad_edge=False,
+                "col",
+                "field",
+                "value",
+                "conf",
+                "why",
+                show_lines=False,
+                title="WOULD WRITE",
+                title_justify="left",
+                title_style="bold green",
+                box=None,
+                pad_edge=False,
             )
             for change in sorted(writes, key=lambda c: c.column):
                 table.add_row(
@@ -215,8 +227,14 @@ def print_dry_run(console: Console, cfg: Config, outcome: RunOutcome) -> None:
         held = held_by_row.get(candidate.row, [])
         if held:
             table = Table(
-                "would be", "value", "conf", "held back because", box=None,
-                title="HELD FOR REVIEW", title_justify="left", title_style="bold yellow",
+                "would be",
+                "value",
+                "conf",
+                "held back because",
+                box=None,
+                title="HELD FOR REVIEW",
+                title_justify="left",
+                title_style="bold yellow",
                 pad_edge=False,
             )
             for change in sorted(held, key=lambda c: c.column)[:12]:
@@ -236,19 +254,24 @@ def print_dry_run(console: Console, cfg: Config, outcome: RunOutcome) -> None:
 def print_summary(console: Console, summary: RunSummary) -> None:
     table = Table(box=None, pad_edge=False, show_header=False)
     table.add_row("run", f"{summary.run_id}  (round {summary.round_id})")
-    table.add_row("mode", "[yellow]DRY RUN - nothing written[/yellow]"
-                  if summary.dry_run else "[green]WRITE[/green]")
-    table.add_row("rows", f"{summary.rows_processed} processed of "
-                          f"{summary.rows_selected} selected / {summary.rows_total} total")
-    table.add_row("pages", f"{summary.pages_fetched} requests, "
-                           f"{summary.cache_hits} served from cache")
+    table.add_row(
+        "mode",
+        "[yellow]DRY RUN - nothing written[/yellow]" if summary.dry_run else "[green]WRITE[/green]",
+    )
+    table.add_row(
+        "rows",
+        f"{summary.rows_processed} processed of "
+        f"{summary.rows_selected} selected / {summary.rows_total} total",
+    )
+    table.add_row(
+        "pages", f"{summary.pages_fetched} requests, {summary.cache_hits} served from cache"
+    )
     table.add_row("cells filled", str(sum(summary.cells_written.values())))
     table.add_row("held for review", str(summary.held_for_review))
     if summary.alternates_dropped:
         table.add_row(
             "alternates dropped",
-            f"{summary.alternates_dropped} beyond the per-field cap "
-            "(see the run report)",
+            f"{summary.alternates_dropped} beyond the per-field cap (see the run report)",
         )
     table.add_row("failures", str(len(summary.failures)))
     if summary.domains_abandoned:
@@ -258,8 +281,14 @@ def print_summary(console: Console, summary: RunSummary) -> None:
     console.print(table)
 
     if summary.cells_written:
-        breakdown = Table("column", "filled", box=None, pad_edge=False,
-                          title="cells filled by column", title_justify="left")
+        breakdown = Table(
+            "column",
+            "filled",
+            box=None,
+            pad_edge=False,
+            title="cells filled by column",
+            title_justify="left",
+        )
         for key, count in sorted(summary.cells_written.items()):
             breakdown.add_row(key, str(count))
         console.print(breakdown)
@@ -268,6 +297,7 @@ def print_summary(console: Console, summary: RunSummary) -> None:
 # ---------------------------------------------------------------------------
 # Files
 # ---------------------------------------------------------------------------
+
 
 def render_markdown(summary: RunSummary, outcome: RunOutcome) -> str:
     lines: list[str] = []
@@ -278,9 +308,7 @@ def render_markdown(summary: RunSummary, outcome: RunOutcome) -> str:
     add(f"- **Round**: `{summary.round_id}`")
     add(f"- **Mode**: {'dry run - nothing written' if summary.dry_run else 'write'}")
     add(f"- **Started**: {summary.started_at.isoformat(timespec='seconds')}")
-    finished = (
-        summary.finished_at.isoformat(timespec="seconds") if summary.finished_at else "-"
-    )
+    finished = summary.finished_at.isoformat(timespec="seconds") if summary.finished_at else "-"
     add(f"- **Finished**: {finished}")
     add(f"- **Input**: `{summary.workbook_in}`")
     if summary.workbook_out:
@@ -447,9 +475,7 @@ def render_markdown(summary: RunSummary, outcome: RunOutcome) -> str:
         for entry in sorted(summary.shared_domain_rows, key=lambda e: e["row"]):
             tokens = ", ".join(entry["needed_tokens"]) or "_(row is the group itself)_"
             total_pages = entry["pages_matched"] + entry["pages_unmatched"]
-            named = (
-                f"{entry['pages_matched']}/{total_pages}" if total_pages else "—"
-            )
+            named = f"{entry['pages_matched']}/{total_pages}" if total_pages else "—"
             add(
                 f"| {entry['row']} | {entry['entity']} | `{entry['domain']}` | "
                 f"{entry['why_shared']} | {tokens} | {named} "
@@ -471,9 +497,7 @@ def render_markdown(summary: RunSummary, outcome: RunOutcome) -> str:
         add("_None._")
     add("")
 
-    scope_blocked = [
-        c for c in outcome.held if "group/chain domain" in c.note
-    ]
+    scope_blocked = [c for c in outcome.held if "group/chain domain" in c.note]
     add("## Rows needing a property-level Website_URL")
     add("")
     if scope_blocked:
@@ -494,8 +518,19 @@ def render_markdown(summary: RunSummary, outcome: RunOutcome) -> str:
 
 
 WOULD_WRITE_CSV_HEADERS = [
-    "Row", "Entity_ID", "Entity_Name", "Column", "Field", "Old_Value", "New_Value",
-    "Confidence", "Data_Class", "Source_URL", "Fetched_At", "Extractor", "Why",
+    "Row",
+    "Entity_ID",
+    "Entity_Name",
+    "Column",
+    "Field",
+    "Old_Value",
+    "New_Value",
+    "Confidence",
+    "Data_Class",
+    "Source_URL",
+    "Fetched_At",
+    "Extractor",
+    "Why",
 ]
 
 
@@ -507,14 +542,91 @@ def render_changes_csv(changes: list[CellChange]) -> str:
     for change in sorted(changes, key=lambda c: (c.row, c.column)):
         writer.writerow(
             [
-                change.row, change.entity_id, change.entity_name, change.column,
-                change.field, change.old_value, change.new_value,
-                change.confidence.value, change.data_class.value, change.source_url,
-                change.fetched_at.isoformat(timespec="seconds"), change.extractor,
+                change.row,
+                change.entity_id,
+                change.entity_name,
+                change.column,
+                change.field,
+                change.old_value,
+                change.new_value,
+                change.confidence.value,
+                change.data_class.value,
+                change.source_url,
+                change.fetched_at.isoformat(timespec="seconds"),
+                change.extractor,
                 change.note,
             ]
         )
     return buffer.getvalue()
+
+
+def render_paste_block(
+    cfg: Config,
+    summary: RunSummary,
+    outcome: RunOutcome,
+    *,
+    provenance: list[CellChange] | None = None,
+    handoff: list[str] | None = None,
+) -> str:
+    """The deliverable: one line per cell, for the Sheet's paste panel.
+
+    Grammar (the panel's, not ours): first token is an A1 reference, no sheet prefix
+    means the data sheet; a bare value sets the cell, `+=` appends to what is there.
+    Blank lines and `#` lines are ignored, so the grouping and everything the run
+    decided NOT to propose travel with the block instead of in a separate file.
+
+    Formulas are deliberately absent. The panel accepts `SHEET!REF = =FORMULA`, but
+    nothing here can generate a correct DASHBOARD range, and a wrong formula pasted
+    into a live total is worse than a note: those go out as comments.
+    """
+    sheet = cfg.workbook.sheet
+    lines = [
+        f"# efe enrich {summary.run_id} - round {summary.round_id}",
+        f"# input: {summary.workbook_in or '(temporary export)'}",
+        f"# {len(outcome.changes)} proposal(s) on {len({c.row for c in outcome.changes})} row(s); "
+        f"{len(outcome.held)} held for review (see the review CSV)",
+        "",
+    ]
+
+    by_row: dict[int, list[CellChange]] = {}
+    for change in [*outcome.changes, *(provenance or [])]:
+        by_row.setdefault(change.row, []).append(change)
+
+    for row in sorted(by_row):
+        group = sorted(by_row[row], key=lambda c: (len(c.column), c.column))
+        head = next((c for c in group if c.entity_name), None)
+        if head is not None:
+            lines.append(f"# {head.entity_id} {head.entity_name} - row {row}")
+        for change in group:
+            lines.append(_paste_line(change, sheet))
+        lines.append("")
+
+    if outcome.held:
+        lines.append(f"# --- held for review, NOT proposed ({len(outcome.held)}) ---")
+        for change in sorted(outcome.held, key=lambda c: (c.row, c.column))[:40]:
+            why = change.note.replace("HELD FOR REVIEW - ", "").split(" | ")[0]
+            lines.append(f"#   {change.column}{change.row}  {change.new_value[:48]}  <- {why}")
+        if len(outcome.held) > 40:
+            lines.append(f"#   ... {len(outcome.held) - 40} more in the review CSV")
+        lines.append("")
+
+    if handoff:
+        lines.append("# --- not fixable from here; do these in Sheets ---")
+        lines += [f"#   {index}. {line}" for index, line in enumerate(handoff, start=1)]
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _paste_line(change: CellChange, sheet: str) -> str:
+    """One cell. `+=` when the new value only extends the old one (Source_URL)."""
+    ref = f"{change.column}{change.row}"
+    old, new = str(change.old_value or ""), str(change.new_value or "")
+    if old and new.startswith(old) and len(new) > len(old):
+        return f"{ref} += {new[len(old) :]}"
+    if new.lstrip().startswith("="):
+        return f"{sheet}!{ref} = {new}"
+    return f"{ref}   {new}"
 
 
 def _md_cell(text: str, limit: int = 300) -> str:
@@ -523,9 +635,7 @@ def _md_cell(text: str, limit: int = 300) -> str:
     return clean[:limit] + ("..." if len(clean) > limit else "") or "&nbsp;"
 
 
-def render_decision_table(
-    summary: RunSummary, outcome: RunOutcome
-) -> str:
+def render_decision_table(summary: RunSummary, outcome: RunOutcome) -> str:
     """One readable table row per decision, written and held alike."""
     lines: list[str] = []
     add = lines.append
@@ -618,6 +728,7 @@ def write_outputs(
     stem: str,
     summary: RunSummary,
     outcome: RunOutcome,
+    paste: str | None = None,
 ) -> dict[str, Path]:
     """Write every process artifact for a run into one local directory.
 
@@ -646,6 +757,13 @@ def write_outputs(
     changes = directory / f"{stem}_changes.csv"
     changes.write_text(render_changes_csv(outcome.changes), encoding="utf-8-sig")
     written["changes"] = changes
+
+    if paste is not None:
+        # Plain utf-8, never utf-8-sig: a BOM would ride along with the first
+        # A1 reference and the panel would not recognise it.
+        block = directory / f"{stem}_paste.txt"
+        block.write_text(paste, encoding="utf-8")
+        written["paste"] = block
 
     return written
 

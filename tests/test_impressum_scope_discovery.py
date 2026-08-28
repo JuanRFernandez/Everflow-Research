@@ -25,6 +25,7 @@ from tests.conftest import fixture_text
 # Impressum -- the highest-yield page in the dataset, handled first-class
 # ---------------------------------------------------------------------------
 
+
 def test_impressum_is_recognised():
     body = fixture_text("impressum_de.html")
     assert looks_like_impressum("https://x.example/impressum", body) is True
@@ -33,35 +34,27 @@ def test_impressum_is_recognised():
 
 
 def test_labelled_fields_are_parsed():
-    parsed = extract_impressum(
-        fixture_text("impressum_de.html"), "https://x.example/impressum"
-    )
+    parsed = extract_impressum(fixture_text("impressum_de.html"), "https://x.example/impressum")
     assert "+49 8821 123456" in {f.value for f in parsed["phone"]}
     assert "info@silberdistel-berghotel.example" in {f.value for f in parsed["email"]}
     assert "Katharina Meier" in {f.value for f in parsed["person"]}
 
 
 def test_representative_carries_its_legal_role():
-    parsed = extract_impressum(
-        fixture_text("impressum_de.html"), "https://x.example/impressum"
-    )
+    parsed = extract_impressum(fixture_text("impressum_de.html"), "https://x.example/impressum")
     roles = {f.extra["role"] for f in parsed["person"]}
     assert roles & {"Geschäftsführer", "Vertretungsberechtigter (Impressum)"}
 
 
 def test_registry_identifiers_are_captured():
-    parsed = extract_impressum(
-        fixture_text("impressum_de.html"), "https://x.example/impressum"
-    )
+    parsed = extract_impressum(fixture_text("impressum_de.html"), "https://x.example/impressum")
     values = {f.value for f in parsed["registry"]}
     assert any("12345" in v for v in values)
     assert any("DE123456789" in v.replace(" ", "") for v in values)
 
 
 def test_impressum_finds_carry_evidence():
-    parsed = extract_impressum(
-        fixture_text("impressum_de.html"), "https://x.example/impressum"
-    )
+    parsed = extract_impressum(fixture_text("impressum_de.html"), "https://x.example/impressum")
     for kind in ("phone", "email", "person"):
         for find in parsed[kind]:
             assert find.matched_text.strip()
@@ -76,6 +69,7 @@ def test_empty_body_is_safe():
 # ---------------------------------------------------------------------------
 # Scope guard
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def guard(real_config):
@@ -189,6 +183,7 @@ def test_accents_fold_for_matching(real_config):
 # Discovery
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     ("url", "kind"),
     [
@@ -259,8 +254,12 @@ def test_plan_puts_impressum_first_for_a_german_site(real_config):
 def test_plan_uses_sitemap_before_blind_probing(real_config):
     urls, _ = parse_sitemap(fixture_text("sitemap.xml"))
     planned = plan_urls(
-        "https://summitlodge.example/", "summitlodge.example", "CH",
-        real_config.discovery, sitemap_urls=urls, limit=4,
+        "https://summitlodge.example/",
+        "summitlodge.example",
+        "CH",
+        real_config.discovery,
+        sitemap_urls=urls,
+        limit=4,
     )
     assert "https://summitlodge.example/impressum" in planned
     assert "https://summitlodge.example/en/contact" in planned
@@ -269,9 +268,13 @@ def test_plan_uses_sitemap_before_blind_probing(real_config):
 def test_plan_never_repeats_a_url(real_config):
     urls, _ = parse_sitemap(fixture_text("sitemap.xml"))
     planned = plan_urls(
-        "https://summitlodge.example/", "summitlodge.example", "CH",
-        real_config.discovery, sitemap_urls=urls,
-        page_links=["https://summitlodge.example/en/contact"], limit=8,
+        "https://summitlodge.example/",
+        "summitlodge.example",
+        "CH",
+        real_config.discovery,
+        sitemap_urls=urls,
+        page_links=["https://summitlodge.example/en/contact"],
+        limit=8,
     )
     assert len(planned) == len(set(planned))
     assert len(planned) <= 8
@@ -287,6 +290,7 @@ def test_candidate_paths_expand_across_languages(real_config):
 # ---------------------------------------------------------------------------
 # robots.txt
 # ---------------------------------------------------------------------------
+
 
 def test_robots_disallow_is_obeyed():
     cache = RobotsCache("EverFlowResearchBot/0.1", respect=True)
